@@ -1,0 +1,106 @@
+/* Event effects share the existing action pauses and never alter game rules. */
+.map-effects,.map-effects *{pointer-events:none}
+.land.active{fill:var(--country-fill);stroke:var(--country-stroke)}
+.map-attack-glow{fill:none;stroke:var(--gold);stroke-width:7;opacity:.12}
+.map-attack-route{fill:none;stroke:var(--gold-light);stroke-width:2;stroke-dasharray:9 7;filter:drop-shadow(0 0 3px #D4AF3766);animation:attack-flow 1s linear infinite}
+.map-attack-route.transfer{stroke:var(--teal);filter:drop-shadow(0 0 3px #2DD4BF55)}
+.map-attack-glow.transfer{stroke:var(--teal)}
+@keyframes attack-flow{to{stroke-dashoffset:-32}}
+.land.interactive{cursor:pointer;transition:filter .2s,stroke .2s,fill .2s}
+.land.interactive:hover,.land.is-hovered{filter:brightness(1.5);stroke:var(--gold-light);stroke-opacity:1;stroke-width:1.6}
+.land.selected{stroke:var(--gold-light);stroke-width:1.6;animation:selected-country 2.4s ease-in-out infinite}
+@keyframes selected-country{0%,100%{stroke-opacity:.6}50%{stroke-opacity:1}}
+.selection-ring{fill:none!important;stroke:var(--gold-light)!important;stroke-width:1.4!important;opacity:.5;animation:selection-breathe 2.4s ease-in-out infinite}
+@keyframes selection-breathe{0%,100%{stroke-opacity:.3;stroke-width:1}50%{stroke-opacity:.9;stroke-width:2.5}}
+.map-marker.is-hovered>circle:not(.selection-ring){stroke:var(--gold-light);stroke-width:3;filter:drop-shadow(0 0 4px #D4AF3799)}
+.country-row{transition:background .2s,border-color .2s}
+.country-row.is-hovered{background:#D4AF3710;border-left-color:var(--gold)}
+.country-row.impacted{animation:roster-impact var(--impact-duration) var(--impact-delay) ease-out both}
+@keyframes roster-impact{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px);background:#FB71851A}60%{transform:translateX(2px)}}
+.country-row.captured{animation:roster-capture var(--capture-duration) var(--capture-delay) ease-out both}
+@keyframes roster-capture{0%{background:#D4AF3728;border-left-color:var(--gold-light)}100%{background:transparent}}
+.land.captured{animation:country-capture var(--capture-duration) var(--capture-delay) ease-out both}
+@keyframes country-capture{0%{fill:var(--capture-from);stroke:var(--gold-light);stroke-width:2}45%{fill:#D4AF3770;stroke:var(--gold-light);stroke-width:2}100%{fill:var(--capture-to);stroke:var(--country-stroke);stroke-width:1.25}}
+.land.impacted{animation:country-impact var(--impact-duration) var(--impact-delay) ease-out both}
+@keyframes country-impact{0%,100%{fill:var(--country-fill)}35%{fill:#FB718570;stroke:#FB7185}}
+.battle-impact-ring{fill:#FB71851A;stroke:var(--red);stroke-width:2;opacity:0;animation:impact-ring var(--impact-duration) var(--event-delay) ease-out both}
+@keyframes impact-ring{0%{r:6;opacity:0}20%{opacity:.8}100%{r:24;opacity:0;stroke-width:.5}}
+.capture-ring{fill:#D4AF3710;stroke:var(--gold-light);stroke-width:3;opacity:0;animation:capture-ripple var(--capture-duration) var(--event-delay) ease-out both}
+@keyframes capture-ripple{0%{r:7;opacity:0}15%{opacity:.9}100%{r:48;opacity:0;stroke-width:.5}}
+.map-delta{font:600 24px var(--mono);text-anchor:middle;paint-order:stroke;stroke:#0B1220;stroke-width:4;stroke-linejoin:round;opacity:0;animation:troop-number var(--float-duration) var(--event-delay) ease-out both}
+.map-delta.positive{fill:var(--teal)}.map-delta.negative{fill:var(--red)}
+@keyframes troop-number{0%{opacity:0;transform:translateY(5px)}15%,65%{opacity:1}100%{opacity:0;transform:translateY(-25px)}}
+.troop-route{fill:none;stroke:var(--unit-colour,var(--teal));stroke-width:2.3;stroke-dasharray:4 6;opacity:0;animation:troop-route var(--flight-duration) var(--event-delay) ease-out both}
+.troop-movement.attack .troop-route{stroke:var(--gold-light);stroke-width:1.2}
+@keyframes troop-route{0%{opacity:0;stroke-dashoffset:0}12%,78%{opacity:.7}100%{opacity:0;stroke-dashoffset:-40}}
+.travelling-unit,.missile-flight,.casualty-marker{pointer-events:none}
+.unit-symbol,.unit-count-body{filter:drop-shadow(0 2px 5px #000B)}
+.unit-disc,.unit-count-back{fill:#0B1220F2;stroke:var(--unit-colour);stroke-width:2.3}
+.troop-movement.attack .unit-count-back{stroke:var(--gold-light)}
+.unit-head{fill:var(--unit-colour)}
+.unit-helmet,.unit-body,.unit-step{fill:none;stroke:var(--unit-colour);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.unit-step{transform-origin:0 5px;animation:unit-step var(--march-duration) var(--march-delay,0ms) ease-in-out 8 alternate both}
+.unit-step-right{animation-direction:alternate-reverse}
+@keyframes unit-step{from{transform:rotate(-14deg)}to{transform:rotate(14deg)}}
+.troop-count{font:600 22px var(--mono);fill:#F1F5F9;letter-spacing:-.04em}
+.troop-movement.transfer .troop-count{fill:var(--unit-colour)}
+.dice-pairs{perspective:600px}
+.dice-rolling .die{--result-fill:var(--raised);--result-border:var(--line-bright);--result-pip:var(--text);animation:dice-tumble var(--roll-duration) var(--roll-offset) cubic-bezier(.25,.7,.3,1) both,dice-result var(--reveal-duration) var(--result-delay) ease-out both}
+.dice-rolling .die.winner{--result-fill:#2DD4BF12;--result-border:#2DD4BF90;--result-pip:var(--teal)}
+.dice-rolling .die.loser{--result-fill:#FB718508;--result-border:#FB718570;--result-pip:var(--red)}
+.dice-rolling .dice-pair>.die:last-child{--dice-direction:-1}
+.dice-rolling .die i{animation:dice-pips var(--roll-duration) var(--roll-offset) linear both,pip-result var(--reveal-duration) var(--result-delay) ease-out both}
+.dice-rolling .dice-pair>span:not(.die){animation:comparison-reveal var(--reveal-duration) var(--result-delay) ease-out both}
+.dice-rolling .dice-pair:nth-child(n+13) .die,.dice-rolling .dice-pair:nth-child(n+13) .die i,.dice-rolling .dice-pair:nth-child(n+13)>span:not(.die){animation:none}
+@keyframes dice-tumble{0%{transform:translateY(-8px) rotateX(0) rotateZ(calc(-12deg * var(--dice-direction,1)));filter:blur(.4px)}23%{transform:translateY(-13px) rotateX(240deg) rotateZ(calc(28deg * var(--dice-direction,1)))}48%{transform:translateY(3px) rotateX(450deg) rotateZ(calc(-17deg * var(--dice-direction,1)))}72%{transform:translateY(-7px) rotateX(620deg) rotateZ(calc(10deg * var(--dice-direction,1)))}88%{transform:translateY(2px) rotateX(720deg) rotateZ(calc(-4deg * var(--dice-direction,1)))}100%{transform:translateY(0) rotateX(720deg) rotateZ(0);filter:blur(0)}}
+@keyframes dice-pips{0%,20%,40%,60%{filter:blur(1.8px)}10%,30%,50%,100%{filter:blur(0)}}
+@keyframes dice-result{from{background:var(--raised);border-color:var(--line-bright);box-shadow:none}to{background:var(--result-fill);border-color:var(--result-border);box-shadow:0 0 10px color-mix(in srgb,var(--result-border) 20%,transparent)}}
+@keyframes pip-result{from{background:var(--text)}to{background:var(--result-pip)}}
+@keyframes comparison-reveal{from{opacity:0}to{opacity:1}}
+.turn-person.current{box-shadow:0 0 13px #D4AF3710}
+.turn-enter{animation:commander-arrives var(--turn-duration) var(--turn-offset) ease-out both}
+@keyframes commander-arrives{0%{transform:translateY(4px);box-shadow:0 0 0 #D4AF3700}45%{box-shadow:0 0 20px #D4AF3730}100%{transform:translateY(0);box-shadow:0 0 13px #D4AF3710}}
+.turn-banner{position:absolute;z-index:2;left:50%;top:9%;display:flex;align-items:center;gap:9px;width:max-content;max-width:94%;padding:9px 13px;border:1px solid #D4AF374D;border-radius:5px;background:#0B1220F0;box-shadow:0 8px 28px #0005;font:10px var(--mono);letter-spacing:.07em;text-transform:uppercase;white-space:nowrap;pointer-events:none;opacity:0;animation:turn-announcement var(--banner-duration) var(--event-delay) ease-out both}
+.turn-banner.human-turn{color:var(--gold-light);border-color:#D4AF3780}
+.turn-banner-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.turn-round{font-size:8px;color:var(--subtle);padding-left:8px;border-left:1px solid var(--line-bright)}
+@keyframes turn-announcement{0%{opacity:0;transform:translate(-50%,8px)}15%,75%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-5px)}}
+.world-map.victory-map{transform-origin:50% 50%;animation:world-zoom-out var(--zoom-duration) var(--victory-delay) ease-out both}
+@keyframes world-zoom-out{from{transform:scale(1.045)}to{transform:scale(1)}}
+.victory-overlay{position:absolute;z-index:3;inset:0;overflow:hidden;display:grid;place-items:center;pointer-events:none;opacity:0;animation:victory-celebration var(--victory-duration) var(--victory-delay) ease-out both}
+@keyframes victory-celebration{0%{opacity:0}12%,80%{opacity:1}100%{opacity:0}}
+.victory-halo{position:absolute;inset:0;background:radial-gradient(ellipse at center,#D4AF3725,#0B122090 70%)}
+.victory-banner{position:relative;z-index:1;text-align:center;padding:20px 28px;border-block:1px solid #D4AF3790;background:linear-gradient(90deg,#0B122000,#0B1220EB 15%,#0B1220EB 85%,#0B122000);max-width:95%}
+.victory-banner>span{display:block;font:8px var(--mono);color:var(--gold-light);text-transform:uppercase;letter-spacing:.18em}
+.victory-banner strong{display:block;font:550 clamp(18px,2.4vw,32px)/1.2 var(--sans);color:var(--gold-light);margin:10px 0;text-shadow:0 0 20px #D4AF3740}
+.confetti-field{position:absolute;inset:0;overflow:hidden}
+.confetti-field i{position:absolute;top:-12px;width:4px;height:8px;border-radius:1px;opacity:0;animation:confetti-fall var(--confetti-duration) var(--confetti-delay) cubic-bezier(.2,.55,.5,1) both}
+@keyframes confetti-fall{0%{opacity:0;transform:translate(0,0) rotate(0)}12%,70%{opacity:.85}100%{opacity:0;transform:translate(var(--drift),400px) rotate(var(--twist))}}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(max-width:480px){.turn-banner{font-size:8px;gap:6px;padding:7px 9px}.turn-round{font-size:7px}.victory-banner{padding:12px 18px}.victory-banner>span{font-size:7px}.map-delta{font-size:24px}.unit-symbol,.unit-count-body{transform:scale(1.2)}}
+@media(prefers-reduced-motion:reduce){html:not([data-motion="full"]) .map-attack-route{animation:none;stroke-dasharray:none}html:not([data-motion="full"]) .map-effects,html:not([data-motion="full"]) .turn-banner,html:not([data-motion="full"]) .victory-overlay{display:none}html:not([data-motion="full"]) .land.captured,html:not([data-motion="full"]) .land.impacted{fill:var(--country-fill);stroke:var(--country-stroke)}}
+html[data-motion="reduced"] .map-effects,html[data-motion="reduced"] .turn-banner,html[data-motion="reduced"] .victory-overlay{display:none}
+.country-row{position:relative}
+.country-loss{position:absolute;right:36px;top:4px;z-index:2;padding:3px 6px;border:1px solid #FB718590;border-radius:6px;background:#301A27F5;color:var(--red);font:600 13px/1.2 var(--mono);pointer-events:none;transform-origin:center;box-shadow:0 3px 12px #0005}
+.casualty-marker rect{fill:#301A27F5;stroke:#FB7185;stroke-width:1.5;filter:drop-shadow(0 2px 4px #0009)}
+.casualty-marker text{fill:#FF9AA8;font:700 23px var(--mono);paint-order:stroke;stroke:#301A27;stroke-width:1}
+.missile-flight{filter:drop-shadow(0 0 4px #D4AF3780)}
+.missile-body{fill:#FFF3CA;stroke:#B58524;stroke-width:1}
+.missile-fins{fill:#D4AF37;stroke:#5C4313;stroke-width:.7}
+.missile-band{stroke:#FB7185;stroke-width:2.5}
+.missile-flame{fill:#FFB347;filter:drop-shadow(0 0 3px #FF933F)}
+.missile-trail{fill:none;stroke:#FFCB7770;stroke-width:3;stroke-linecap:round}
+.game-heading .nav-actions,.history-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+@media(max-width:480px){.casualty-marker text{font-size:26px}.country-loss{font-size:12px;right:38px;top:3px}.history-actions{gap:5px}.history-actions .btn{font-size:10px;padding:7px 9px}}
+
+.transfer-deltas .map-delta{fill:var(--movement-colour,var(--teal))}
+
+/* Faces visibly change during the tumble, then settle on the recorded result. */
+.dice-pairs{padding:7px 0 5px}
+.dice-rolling{border:1px solid #D4AF3730;border-radius:8px;background:#D4AF3705;padding:10px 5px}
+.dice-roll-status{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:7px;margin:0 0 11px;color:var(--gold-light);font:9px var(--mono);letter-spacing:.04em}
+.dice-status-dot{width:5px;height:5px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px #D4AF3760}
+.dice-pairs[data-rolling="false"] .dice-status-dot{background:var(--teal);box-shadow:none}
+.die{box-shadow:inset 0 1px 0 #FFFFFF12,0 3px 0 #0005,0 6px 12px #0003;transform-style:preserve-3d;will-change:auto}
+.dice-pairs[data-rolling="true"] .die{will-change:transform}
+.dice-pairs[data-rolling="true"] .dice-pair>span:not(.die){opacity:0}

@@ -1,0 +1,22 @@
+.settings-trigger{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:8px;flex-shrink:0}
+.settings-trigger svg{width:18px;height:18px}
+.settings-section h3{font-size:14px;margin:0 0 10px;color:var(--text)}
+.settings-section+.settings-section{border-top:1px solid var(--line);margin-top:24px;padding-top:22px}
+.settings-section .audio-intro{margin-bottom:12px}
+.audio-dialog{width:min(440px,calc(100vw - 32px));max-height:90dvh;padding:0;color:var(--text);background:var(--surface);border:1px solid var(--line-bright);border-radius:12px;box-shadow:0 24px 90px #0009;overflow:auto}
+.audio-dialog::backdrop{background:#050B17C9;backdrop-filter:blur(5px)}
+.audio-dialog .help-head{padding:24px;border-bottom:1px solid var(--line)}
+.audio-dialog h2{font-size:24px;letter-spacing:-.03em;margin:6px 0 0}
+.audio-dialog-body{padding:22px 24px 25px}
+.audio-intro{font-size:12px;line-height:1.8;color:var(--muted);margin:0 0 20px}
+.audio-slider{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;margin:22px 0;font-size:13px}
+.audio-slider output{font:11px var(--mono);color:var(--gold-light)}
+.audio-slider input{width:100%;grid-column:1/-1;accent-color:var(--gold);cursor:pointer;min-height:28px;margin:0}
+.audio-mute{display:flex;align-items:center;gap:10px;font-size:12px;padding:12px 0 18px;color:var(--muted)}
+.audio-mute input{width:17px;height:17px;accent-color:var(--gold)}
+.audio-status{margin:13px 0 0;font:10px/1.7 var(--mono);color:var(--teal)}
+.audio-credits{border-top:1px solid var(--line);margin-top:23px;padding-top:17px;font-size:11px;color:var(--muted)}
+.audio-credits summary{cursor:pointer;color:var(--gold-light)}
+.audio-credits p{line-height:1.8;margin:13px 0 0}
+.audio-credits a{color:var(--gold-light);text-decoration:underline;text-underline-offset:3px}
+@media(max-width:480px){.nav-account{gap:6px}.settings-trigger{min-height:32px!important;padding:6px 8px!important;font-size:10px!important}.settings-trigger svg{width:14px;height:14px}.game-nav .nav-account>.btn:not(.settings-trigger){font-size:0;padding:6px}.game-nav .nav-account>.btn:not(.settings-trigger) svg{width:15px}.audio-dialog .help-head{padding:20px}.audio-dialog-body{padding:18px 20px}}

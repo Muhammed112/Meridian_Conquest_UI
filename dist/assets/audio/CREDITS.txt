@@ -1,0 +1,31 @@
+MERIDIAN CONQUEST — AUDIO CREDITS
+
+"Decisions", "Lost Frontier", "Mechanolith"
+Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0
+http://creativecommons.org/licenses/by/4.0/
+
+Music source and attribution generator:
+https://incompetech.com/music/royalty-free/licenses/
+https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100756
+https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100879
+https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1300039
+Recordings adapted for faster game playback: MP3 audio re-encoded at 128 kbps;
+1.50 seconds of opening silence removed from Decisions and 1.26 seconds from
+Lost Frontier, with a short fade to avoid clicks. Original music is otherwise
+retained. In-game playback loops, crossfades, adjusts volume and ducks the
+music under battle effects.
+
+Click: Interface Sounds by Kenney
+Dice shake and landing: Casino Audio by Kenney
+Footsteps and impact: Impact Sounds by Kenney
+https://kenney.nl/assets/interface-sounds
+https://kenney.nl/assets/casino-audio
+https://kenney.nl/assets/impact-sounds
+Creative Commons CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+Original pack license notices are included beside this file.
+
+Missile whoosh and musical notification, capture, reinforcement, victory,
+defeat and invalid-action cues are original procedural Web Audio effects
+created for this project. No external service or API key is required.

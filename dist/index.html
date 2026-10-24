@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0B1220">
+  <meta name="description" content="Meridian Conquest. Choose your nation, build your army and conquer the world in a single-player strategy game.">
+  <title>Meridian Conquest — Your world. Your next move.</title>
+  <link rel="icon" href="./assets/compass.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=IBM+Plex+Mono:wght@400;450;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=settings-20261025-1">
+  <link rel="stylesheet" href="./motion.css?v=settings-20261025-1">
+  <link rel="stylesheet" href="./difficulty.css?v=settings-20261025-1">
+  <link rel="stylesheet" href="./audio.css?v=settings-20261025-1">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="game-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="help-dialog" aria-labelledby="help-title"></dialog>
+  <dialog id="settings-dialog" class="audio-dialog" aria-labelledby="settings-title">
+    <div class="help-head"><div><div class="eyebrow">Make it your own</div><h2 id="settings-title">Settings.</h2></div><button type="button" class="icon-button" data-action="close-settings" aria-label="Close settings">✕</button></div>
+    <div class="audio-dialog-body">
+      <section class="settings-section" aria-labelledby="settings-animation-title">
+        <h3 id="settings-animation-title">Animations</h3>
+        <p class="audio-intro">Choose full map effects or reduced motion.</p>
+        <div id="settings-motion"></div>
+      </section>
+      <section class="settings-section" aria-labelledby="settings-sound-title">
+      <h3 id="settings-sound-title">Sound</h3>
+      <label class="audio-slider" for="audio-music">Music <output id="audio-music-value" for="audio-music">22%</output><input id="audio-music" type="range" min="0" max="100" value="22"></label>
+      <label class="audio-slider" for="audio-effects">Sound effects <output id="audio-effects-value" for="audio-effects">60%</output><input id="audio-effects" type="range" min="0" max="100" value="60"></label>
+      <label class="audio-mute"><input id="audio-muted" type="checkbox"> Mute all sound</label>
+      <button type="button" class="btn btn-full" data-action="test-audio">Test sound ♫</button>
+      <p class="audio-status" id="audio-status" role="status">Sound starts when you interact with the game.</p>
+      <details class="audio-credits"><summary>Music &amp; sound credits</summary>
+        <p>Menu: “Decisions”<br>Campaign: “Lost Frontier”<br>Battle: “Mechanolith”<br>Kevin MacLeod (<a href="https://incompetech.com" target="_blank" rel="noopener">incompetech.com</a>)<br>Licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">Creative Commons: By Attribution 4.0</a>.<br>Recordings compressed for faster loading; opening silence trimmed from the menu and campaign tracks. Playback includes looping, fades and volume changes.</p>
+        <p>Clicks, dice, footsteps and impacts: <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0.<br>Missile and musical cues created for Meridian Conquest.</p>
+        <p><a href="./assets/audio/CREDITS.txt" target="_blank" rel="noopener">Full audio credits and sources ↗</a></p>
+      </details>
+      </section>
+    </div>
+  </dialog>
+  <script type="module" src="./app.js?v=settings-20261025-1"></script>
+</body>
+</html>
