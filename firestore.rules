@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    match /users/{uid}/games/{gameId} {
+      allow read: if owner(uid);
+      allow create, update: if owner(uid)
+        && request.resource.data.keys().hasOnly(['payload', 'updatedAt'])
+        && request.resource.data.payload is string
+        && request.resource.data.payload.size() < 700000
+        && request.resource.data.updatedAt is number;
+      match /events/{eventId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.keys().hasOnly(['sequence','type','context','payload'])
+          && request.resource.data.sequence is int && request.resource.data.sequence >= 0
+          && request.resource.data.type is string
+          && request.resource.data.context is string && request.resource.data.context.size() < 60000
+          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000;
+        allow update, delete: if false;
+      }
+      match /commentary/{eventId} {
+        allow read: if owner(uid);
+        allow write: if false;
+      }
+    }
+  }
+}

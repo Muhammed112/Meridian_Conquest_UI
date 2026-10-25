@@ -1,6 +1,8 @@
 {
-  "name":"meridian-conquest-ui",
-  "private":true,
-  "type":"module",
-  "scripts":{"check":"node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --test tests/*.test.js"}
+  "name": "meridian-conquest-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --check dist/cloud.js && node --check functions/index.js && node --check functions/commentary.js && node --test tests/*.test.js"
+  }
 }

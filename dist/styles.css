@@ -17,3 +17,5 @@
 @media(max-width:760px){.country-roster{grid-template-columns:repeat(2,minmax(0,1fr))}.country-row{display:grid;grid-template-columns:23px minmax(0,1fr) 27px;padding:6px 9px;gap:7px;min-height:43px}.country-row .flag{font-size:19px}.country-row .country-name{grid-column:2;grid-row:1;font-size:11px;line-height:1.3;white-space:normal;overflow:visible}.country-row .country-owner{display:block;margin:3px 0 0;font-size:8px}.country-row .army-count{font-size:14px;grid-column:3;grid-row:1}.roster-head{font-size:10px}.roster-head .badge{font-size:8px}}
 @media(prefers-reduced-motion:reduce){html:not([data-motion="full"]){scroll-behavior:auto}html:not([data-motion="full"]) *,html:not([data-motion="full"]) *:before,html:not([data-motion="full"]) *:after{transition:none!important;animation:none!important}}
 html[data-motion="reduced"]{scroll-behavior:auto}html[data-motion="reduced"] *,html[data-motion="reduced"] *:before,html[data-motion="reduced"] *:after{transition:none!important;animation:none!important}
+
+.ai-commentary{color:var(--gold-light);font-size:12px;line-height:1.7;margin:7px 0}.ai-commentary:empty{display:none}

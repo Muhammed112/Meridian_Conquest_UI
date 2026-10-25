@@ -5,3 +5,7 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+.firebase/
+*debug*.log
+functions/.secret.local
