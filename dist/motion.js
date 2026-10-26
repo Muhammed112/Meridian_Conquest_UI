@@ -7,6 +7,17 @@ const changes=(before,after)=>after.map(country=>({code:country.code,amount:coun
 export const countryPoint=country=>[(country.lon+180)*960/360,(85-country.lat)*480/143];
 export const resolveReducedMotion=(choice,systemReduced)=>choice==='full'?false:choice==='reduced'?true:!!systemReduced;
 export const DICE_ROLL_DURATION=1100;
+export const rollPending=frame=>Boolean(frame?.roll&&!frame.reduced&&frame.roll.age<frame.roll.rollDuration);
+// Keep calculated results in the engine, but present the preceding board until
+// the cosmetic dice finish. This copy is never saved or passed to game actions.
+export function presentationGame(game,frame){
+  if(!rollPending(frame))return game;
+  const roll=frame.roll,index=game.events.findIndex(event=>event.id===roll.id);
+  return {...game,presentationPending:true,winner:null,lastBattle:null,
+    countries:game.countries.map(country=>({...country,...roll.beforeBoard?.find(item=>item.code===country.code)})),
+    events:index<0?game.events:game.events.slice(0,index),
+    battle:{...(game.battle||game.lastBattle),from:roll.from,to:roll.to,pairs:roll.pairs}};
+}
 const diePoints={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
 // Cosmetic faces use a clock, never random numbers from the battle engine.
 export function diceFaceAt(final,age,duration,index=0){
@@ -55,6 +66,7 @@ export class MotionDirector {
   }
   reset(){
     clearTimeout(this.unlockTimer);
+    clearTimeout(this.announcementTimer);
     if(this.animationFrame!=null)globalThis.cancelAnimationFrame?.(this.animationFrame);
     this.animationFrame=null;
     this.key=null;this.cursor=0;this.cursorId=null;this.board=[];
@@ -69,7 +81,8 @@ export class MotionDirector {
     const key=`${view}:${watch?'watch':'live'}:${game.id}`;
     this.effects=this.effects.filter(effect=>time-effect.startedAt<effect.duration);
     let incoming=[],previous=this.board;
-    const reset=key!==this.key||(view!=='history'&&(events.length<this.cursor||(this.cursor>0&&events[this.cursor-1]?.id!==this.cursorId)));
+    const cursorIndex=this.cursorId?events.findIndex(event=>event.id===this.cursorId):-1;
+    const reset=key!==this.key||(view!=='history'&&this.cursorId&&cursorIndex<0);
     if(reset){
       this.reset();this.key=key;this.replayIndex=replay;
     }else if(view==='history'&&replay!==this.replayIndex){
@@ -77,7 +90,7 @@ export class MotionDirector {
       incoming=events[replay]?[events[replay]]:[];
       previous=events[replay-1]?.board||events[replay]?.board||[];
     }else if(view!=='history'){
-      incoming=events.slice(this.cursor);
+      incoming=events.slice(cursorIndex+1);
     }
     if(!this.reducedMotion){
       for(const event of incoming){
@@ -87,7 +100,7 @@ export class MotionDirector {
           const origin=event.board.find(country=>country.code===event.from);
           if(origin&&origin.army>1)add('attack',{from:event.from,to:event.to,amount:origin.army-1,owner:origin.owner},2900*scale);
         }
-        if(event.type==='dice')add('roll',{from:event.from,to:event.to,pairs:event.pairs,...lossesFor(event,previous),rollDuration:DICE_ROLL_DURATION*scale},DICE_ROLL_DURATION*scale+Math.max(1100,1700*scale)+100);
+        if(event.type==='dice')add('roll',{from:event.from,to:event.to,pairs:event.pairs,beforeBoard:previous.map(country=>({...country})),...lossesFor(event,previous),rollDuration:DICE_ROLL_DURATION*scale},DICE_ROLL_DURATION*scale+Math.max(1100,1700*scale)+100);
         if(event.type==='transfer'){
           const movement=changes(previous,event.board),from=movement.find(c=>c.amount<0),to=movement.find(c=>c.amount>0);
           const source=event.from||from?.code,destination=event.to||to?.code;
@@ -118,20 +131,25 @@ export class MotionDirector {
     const route=view==='history'?((event?.from&&event?.to&&['attack','dice','transfer'].includes(event.type))?{from:event.from,to:event.to,kind:event.type==='transfer'?'transfer':'attack',active:true}:movementRoute):game.battle?{from:game.battle.from,to:game.battle.to,kind:'attack',active:true}:movementRoute;
     return {effects,route,roll:latest(effects,'roll'),turn:latest(effects,'turn'),victory:latest(effects,'victory'),reduced:this.reducedMotion};
   }
-  mount(root,frame){
+  mount(root,frame,{onSettled}={}){
     clearTimeout(this.unlockTimer);
+    clearTimeout(this.announcementTimer);
     this.animate(root,frame);
-    const roll=frame.roll,button=root.querySelector('[data-action="roll"]');
-    // Prevent a second human roll from replacing the first before it settles.
-    if(button&&roll&&!frame.reduced&&roll.age<roll.rollDuration){
-      button.disabled=true;
-      this.unlockTimer=setTimeout(()=>{if(root.contains(button))button.disabled=false;},roll.rollDuration-roll.age);
+    const roll=frame.roll;
+    if(rollPending(frame)){
+      const buttons=Array.from(root.querySelectorAll('.action-panel button,.board-actions button,.room-control-panel button'));
+      const enabled=buttons.filter(button=>!button.disabled);for(const button of enabled)button.disabled=true;
+      this.unlockTimer=setTimeout(()=>{if(onSettled)onSettled();else for(const button of enabled)if(root.contains(button))button.disabled=false;},Math.max(1,roll.rollDuration-roll.age));
     }
     const announcement=frame.victory||frame.turn;
     if(announcement&&announcement.id!==this.lastAnnouncement){
-      this.lastAnnouncement=announcement.id;
-      const node=root.ownerDocument.getElementById('game-announcer');
-      if(node)node.textContent=announcement.kind==='victory'?`${announcement.player===0?'You':commanders[announcement.player]} ${announcement.player===0?'control':'controls'} all ten countries.`:announcement.player===0?'Your turn.':`${commanders[announcement.player]}'s turn.`;
+      const announce=()=>{
+        this.lastAnnouncement=announcement.id;
+        const node=root.ownerDocument.getElementById('game-announcer');
+        if(node)node.textContent=announcement.kind==='victory'?`${announcement.player===0?'You':commanders[announcement.player]} ${announcement.player===0?'control':'controls'} all ten countries.`:announcement.player===0?'Your turn.':`${commanders[announcement.player]}'s turn.`;
+      };
+      const delay=Math.max(0,(announcement.delay||0)-(announcement.age||0));
+      if(delay)this.announcementTimer=setTimeout(announce,delay);else announce();
     }
   }
   animate(root,frame=null){
@@ -186,7 +204,8 @@ export function countryMotion(frame,country){
 
 export function diceMotion(frame,pairs){
   const roll=frame?.roll;
-  if(!roll||frame.reduced||roll.pairs!==pairs||roll.age>=roll.rollDuration+240*roll.scale)return {className:'',style:''};
+  const samePairs=roll&&(roll.pairs===pairs||(roll.pairs?.length===pairs?.length&&roll.pairs.every((pair,index)=>pair.a===pairs[index].a&&pair.d===pairs[index].d)));
+  if(!roll||frame.reduced||!samePairs||roll.age>=roll.rollDuration+240*roll.scale)return {className:'',style:''};
   return {className:'dice-rolling',style:`--roll-duration:${roll.rollDuration}ms;--roll-offset:${-roll.age}ms;--result-delay:${roll.rollDuration-roll.age}ms;--reveal-duration:${240*roll.scale}ms;`};
 }
 

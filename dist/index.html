@@ -10,10 +10,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=IBM+Plex+Mono:wght@400;450;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=settings-20261025-1">
-  <link rel="stylesheet" href="./motion.css?v=settings-20261025-1">
-  <link rel="stylesheet" href="./difficulty.css?v=settings-20261025-1">
-  <link rel="stylesheet" href="./audio.css?v=settings-20261025-1">
+  <link rel="stylesheet" href="./styles.css?v=battle-reveal-20261026-1">
+  <link rel="stylesheet" href="./motion.css?v=battle-reveal-20261026-1">
+  <link rel="stylesheet" href="./difficulty.css?v=rooms-20261025-1">
+  <link rel="stylesheet" href="./multiplayer.css?v=rooms-20261025-1">
+  <link rel="stylesheet" href="./audio.css?v=rooms-20261025-1">
 </head>
 <body>
   <div id="app"></div>
@@ -27,6 +28,12 @@
         <h3 id="settings-animation-title">Animations</h3>
         <p class="audio-intro">Choose full map effects or reduced motion.</p>
         <div id="settings-motion"></div>
+      </section>
+      <section class="settings-section" aria-labelledby="settings-ai-title">
+        <h3 id="settings-ai-title">AI commentary</h3>
+        <label class="audio-mute"><input id="ai-enabled" type="checkbox"> Gemini battle commentary</label>
+        <p class="audio-intro">Short field reports based on the moves and results in your campaign.</p>
+        <p id="ai-status" class="audio-status" role="status">Connecting...</p>
       </section>
       <section class="settings-section" aria-labelledby="settings-sound-title">
       <h3 id="settings-sound-title">Sound</h3>
@@ -43,6 +50,6 @@
       </section>
     </div>
   </dialog>
-  <script type="module" src="./app.js?v=settings-20261025-1"></script>
+  <script type="module" src="./app.js?v=match-commentary-20261026-1"></script>
 </body>
 </html>

@@ -6,6 +6,8 @@ A responsive, interactive frontend based on the supplied Figma design. The sourc
 
 Serve the `dist` folder using any static web server, for example `python3 -m http.server 8080 --directory dist`, then open http://localhost:8080.
 
+For Gemini commentary on localhost, sign in with `firebase login` and run `npm run dev`. Open http://localhost:8081. This server binds only to your computer and configures a private App Check development token outside `dist`, under the ignored `.firebase/` directory. It never prints or deploys the token. Plain static servers support gameplay and saves; use the development server for local AI requests.
+
 Run `npm run check` for JavaScript syntax checks and the battle-rule tests. No dependency installation is needed.
 
 ## Included
@@ -28,10 +30,18 @@ Dice now visibly change faces and bounce for 1.1 seconds (0.55 seconds in fast p
 
 ## Integration boundary
 
-This app supports optional Firebase Authentication, Firestore saves and backend Gemini commentary. Without Firebase configuration it runs as a local demo with preview account forms. With Firebase connected, credentials are sent securely to Firebase Authentication and campaigns are saved under the signed-in account. Shared links currently contain read-only snapshots rather than live server sessions. Country populations are illustrative.
+This app supports optional Firebase Authentication, Firestore saves and Gemini commentary through Firebase AI Logic. Without Firebase configuration it runs as a local demo with preview account forms. With Firebase connected, credentials are sent securely to Firebase Authentication and campaigns are saved under the signed-in account. Shared links currently contain read-only snapshots rather than live server sessions. Country populations are illustrative.
 
 Game rules and dice still execute in the browser. To enforce authoritative gameplay and prevent owners from editing their own game data, move `GameEngine` operations into backend functions. Live spectators are also a separate remaining feature. The prototype conquest allocation assigns one earned soldier to the occupied country and leaves the remaining reward in the origin; confirm the examiner's intended reward-allocation convention before finalising the backend.
 
 ## Firebase and AI commentary
 
-See [the setup guide](docs/FIREBASE.md) to connect a Firebase project, enable email/password accounts, save campaigns in Firestore and generate Gemini battle commentary on the server. The Gemini key belongs in Secret Manager, never in the public web configuration.
+Gemini 3.6 Flash adds match-aware commentary beneath new battle reports in campaigns and multiplayer. Its commentator follows the event-time standings, territorial lead changes and battle pressure, with recent wording memory to avoid repetitive stat readouts. Open the Settings gear to switch it on or off. Use **Generate commentary** above the field reports to narrate the three latest eligible saved events without current-version reports. This also refreshes older commentary while preserving the original reports. The panel shows queued, generating and error states. Reports are saved by event ID, so reloading and replaying reuse them. Turns continue if the model is slow or a free quota is exhausted.
+
+The connected project uses Firebase AI Logic with the Gemini Developer API on the free Spark plan. Requests require sign-in and App Check; no personal Gemini API key goes in the browser. See [the setup guide](docs/FIREBASE.md) for configuration, local development and access boundaries.
+
+## Play with friends
+
+[Open multiplayer](https://meridian-conquest-m112.web.app/#multiplayer).
+
+Choose **Multiplayer**, create a room and share the six-character code. Signed-in friends join the lobby, and the host starts once everyone is ready. Bots fill the remaining seats up to ten players. Everyone sees the board, troop counts, dice and field reports update live. Keep the host's room open for bot turns; a returning player can sign in and use the same code to reclaim their seat. See [Firebase setup](docs/FIREBASE.md#multiplayer-rooms) for the hosting and trust boundaries.

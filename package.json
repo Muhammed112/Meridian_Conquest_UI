@@ -3,6 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --check dist/cloud.js && node --check functions/index.js && node --check functions/commentary.js && node --test tests/*.test.js"
+    "dev": "node scripts/dev-server.mjs",
+    "check": "node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --check dist/cloud.js && node --check functions/index.js && node --check functions/commentary.js && node --check dist/rooms.js && node --check dist/multiplayer.js && node --check dist/commentary.js && node --test tests/*.test.js",
+    "fix-map-seams": "node scripts/fix-map-seams.mjs"
+  },
+  "devDependencies": {
+    "d3-geo": "^3.1.1",
+    "topojson-client": "^3.1.0"
   }
 }

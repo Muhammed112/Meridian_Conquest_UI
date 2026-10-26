@@ -19,3 +19,7 @@
 html[data-motion="reduced"]{scroll-behavior:auto}html[data-motion="reduced"] *,html[data-motion="reduced"] *:before,html[data-motion="reduced"] *:after{transition:none!important;animation:none!important}
 
 .ai-commentary{color:var(--gold-light);font-size:12px;line-height:1.7;margin:7px 0}.ai-commentary:empty{display:none}
+
+.campaign-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;flex-shrink:0}.campaign-heading-actions .btn{padding-inline:14px}@media(max-width:760px){.campaign-heading-actions{justify-content:flex-start}}
+
+.commentary-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.commentary-feed-status{margin:0;padding:0 18px 12px;color:var(--muted);font-size:12px;line-height:1.6}

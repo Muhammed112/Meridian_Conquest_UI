@@ -2,6 +2,115 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function signedIn() { return request.auth != null; }
+    function validAIReport(eventId) {
+      let d=request.resource.data;
+      return d.keys().hasOnly(['eventId','eventType','text','status','source','model','authorUid','createdAt'])
+        && d.eventId == eventId && d.authorUid == request.auth.uid
+        && d.eventType in ['attack','dice','retreat','held','conquest','elimination','victory','decision']
+        && d.text is string && d.text.size() > 0 && d.text.size() <= 500
+        && d.status == 'ready' && d.source == 'gemini' && d.model == 'gemini-3.5-flash-lite'
+        && d.createdAt == request.time;
+    }
+    function validAIReportV2(eventId) {
+      let d=request.resource.data;
+      return d.keys().hasOnly(['eventId','eventType','text','status','source','model','narrationVersion','authorUid','createdAt'])
+        && d.eventId == eventId && d.authorUid == request.auth.uid
+        && d.eventType in ['attack','dice','retreat','held','conquest','elimination','victory','decision']
+        && d.text is string && d.text.size() > 0 && d.text.size() <= 500
+        && d.status == 'ready' && d.source == 'gemini' && d.model == 'gemini-3.6-flash' && d.narrationVersion == 2
+        && d.createdAt == request.time;
+    }
+
+    match /rooms/{code} {
+      function validRoom(d) {
+        return d.keys().hasOnly(['code','hostUid','memberIds','members','name','difficulty','status','createdAt','updatedAt','revision','currentSeat','controllerUid','winnerSeat','eventCount','payload'])
+          && code.matches('^[A-HJ-NP-Z2-9]{6}$') && d.code == code
+          && d.hostUid is string && d.hostUid in d.memberIds
+          && d.memberIds is list && d.memberIds.size() >= 1 && d.memberIds.size() <= 10
+          && d.memberIds.toSet().size() == d.memberIds.size()
+          && d.members is map && d.members.keys().toSet() == d.memberIds.toSet()
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 50
+          && d.difficulty in ['easy','medium','hard','extreme']
+          && d.status in ['lobby','playing','finished','closed']
+          && d.createdAt is number && d.updatedAt is number
+          && d.revision is int && d.eventCount is int && d.eventCount >= 0
+          && d.payload is string && d.payload.size() < 700000
+          && d.currentSeat is int && d.currentSeat >= 0 && d.currentSeat < 10
+          && d.winnerSeat is int && d.winnerSeat >= -1 && d.winnerSeat < 10
+          && d.controllerUid == (d.currentSeat < d.memberIds.size() ? d.memberIds[d.currentSeat] : d.hostUid);
+      }
+      function validSelf(d) {
+        return d.members[request.auth.uid].keys().hasOnly(['name'])
+          && d.members[request.auth.uid].name is string
+          && d.members[request.auth.uid].name.size() > 0
+          && d.members[request.auth.uid].name.size() <= 32;
+      }
+      function lobbyMembership() {
+        let old = resource.data;
+        let next = request.resource.data;
+        return old.status == 'lobby' && next.status == 'lobby'
+          && next.diff(old).affectedKeys().hasOnly(['members','memberIds','updatedAt','revision'])
+          && next.members.diff(old.members).affectedKeys().hasOnly([request.auth.uid])
+          && ((!(request.auth.uid in old.memberIds)
+              && next.memberIds == old.memberIds.concat([request.auth.uid]) && validSelf(next))
+            || (request.auth.uid != old.hostUid && request.auth.uid in old.memberIds
+              && next.memberIds == old.memberIds.removeAll([request.auth.uid])
+              && !(request.auth.uid in next.members)));
+      }
+      function gameUpdate() {
+        let old = resource.data;
+        let next = request.resource.data;
+        return next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt','currentSeat','controllerUid','winnerSeat','eventCount'])
+          && ((old.status == 'lobby' && request.auth.uid == old.hostUid && next.status == 'playing' && next.winnerSeat == -1)
+            || (old.status == 'playing' && request.auth.uid == old.controllerUid
+              && ((next.status == 'playing' && next.winnerSeat == -1)
+                || (next.status == 'finished' && next.winnerSeat >= 0))))
+          && next.eventCount > old.eventCount && next.eventCount <= old.eventCount + 30;
+      }
+      allow get: if signedIn();
+      allow list, delete: if false;
+      allow create: if signedIn() && validRoom(request.resource.data) && validSelf(request.resource.data)
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.memberIds == [request.auth.uid]
+        && request.resource.data.revision == 0 && request.resource.data.eventCount == 0
+        && request.resource.data.status == 'lobby' && request.resource.data.payload == ''
+        && request.resource.data.currentSeat == 0 && request.resource.data.winnerSeat == -1;
+      allow update: if signedIn() && validRoom(request.resource.data)
+        && request.resource.data.revision == resource.data.revision + 1
+        && (lobbyMembership() || gameUpdate()
+          || (resource.data.status == 'lobby' && request.auth.uid == resource.data.hostUid
+            && request.resource.data.status == 'closed'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','revision','updatedAt'])));
+      match /aiReports/{eventId} {
+        function parentRoom() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
+        allow read: if signedIn() && request.auth.uid in parentRoom().memberIds;
+        allow create: if signedIn() && request.auth.uid == parentRoom().hostUid && validAIReport(eventId)
+          && exists(/databases/$(database)/documents/rooms/$(code)/events/$(eventId));
+        allow update, delete: if false;
+      }
+      match /aiReportsV2/{eventId} {
+        function parentRoom() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
+        allow read: if signedIn() && request.auth.uid in parentRoom().memberIds;
+        allow create: if signedIn() && request.auth.uid == parentRoom().hostUid && validAIReportV2(eventId)
+          && exists(/databases/$(database)/documents/rooms/$(code)/events/$(eventId));
+        allow update, delete: if false;
+      }
+      match /events/{eventId} {
+        function roomBefore() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
+        function roomAfter() { return getAfter(/databases/$(database)/documents/rooms/$(code)).data; }
+        allow read: if signedIn() && request.auth.uid in roomBefore().memberIds;
+        allow create: if signedIn() && request.auth.uid == roomBefore().controllerUid
+          && roomAfter().revision == roomBefore().revision + 1
+          && roomBefore().status in ['lobby','playing']
+          && request.resource.data.keys().hasOnly(['sequence','payload'])
+          && request.resource.data.sequence is int
+          && request.resource.data.sequence >= roomBefore().eventCount
+          && request.resource.data.sequence < roomAfter().eventCount
+          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000;
+        allow update, delete: if false;
+      }
+    }
     match /users/{uid}/games/{gameId} {
       allow read: if owner(uid);
       allow create, update: if owner(uid)
@@ -19,9 +128,23 @@ service cloud.firestore {
           && request.resource.data.payload is string && request.resource.data.payload.size() < 60000;
         allow update, delete: if false;
       }
+      match /aiReports/{eventId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && validAIReport(eventId)
+          && exists(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId))
+          && request.resource.data.eventType == get(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)).data.type;
+        allow update, delete: if false;
+      }
       match /commentary/{eventId} {
         allow read: if owner(uid);
         allow write: if false;
+      }
+      match /aiReportsV2/{eventId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && validAIReportV2(eventId)
+          && exists(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId))
+          && request.resource.data.eventType == get(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)).data.type;
+        allow update, delete: if false;
       }
     }
   }

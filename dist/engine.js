@@ -54,7 +54,7 @@ export class GameEngine {
   beginTurn(){
     const g=this.game;if(g.turnStarted||g.winner!==null)return;
     g.turnStarted=true;g.attackUsed=false;g.battle=null;g.budget=g.round>1?this.owned().length*2:0;
-    this.event('turn',`${commanders[this.current]}'s turn${g.budget?` · ${g.budget} reinforcements available`:''}.`);
+    this.event('turn',`${(g.playerNames||commanders)[this.current]}'s turn${g.budget?` · ${g.budget} reinforcements available`:''}.`);
   }
   reinforce(allocations){
     const g=this.game;const owned=this.owned();
@@ -85,8 +85,8 @@ export class GameEngine {
       d.owner=this.current;d.army=1;a.army+=reward-1;
       g.battle=null;g.lastBattle={...b,outcome:'conquest',reward,country:d.name};
       this.event('conquest',`${d.name} conquered. +${reward} soldiers earned; one garrisons the new territory.`,{country:d.code,reward});
-      if(!this.owned(previous).length)this.event('elimination',`${commanders[previous]} has been eliminated.`);
-      if(this.owned().length===10){g.winner=this.current;g.status=this.current===0?'won':'lost';this.event('victory',`${commanders[this.current]} controls all ten countries.`);}
+      if(!this.owned(previous).length)this.event('elimination',`${(g.playerNames||commanders)[previous]} has been eliminated.`);
+      if(this.owned().length===10){g.winner=this.current;g.status=g.mode==='multiplayer'?'finished':this.current===0?'won':'lost';this.event('victory',`${(g.playerNames||commanders)[this.current]} controls all ten countries.`);}
       return {finished:true,conquered:true};
     }
     if(a.army===1){g.lastBattle={...b,outcome:'held'};g.battle=null;this.event('held',`${d.name} holds. One soldier remains in ${a.name}.`);return {finished:true,conquered:false};}
@@ -97,7 +97,7 @@ export class GameEngine {
     const g=this.game;if(g.winner!==null)return;if(g.battle||g.budget)throw new Error('Finish the current action before ending your turn.');
     do{g.position=(g.position+1)%g.order.length;if(g.position===0)g.round++;}while(!this.owned().length);
     g.turnStarted=false;g.lastBattle=null;this.beginTurn();
-    if(!this.owned(0).length)g.status='lost';
+    if(g.mode!=='multiplayer'&&!this.owned(0).length)g.status='lost';
   }
   npcPlan(){
     return NpcStrategy.attack(this.game,this.current);

@@ -104,3 +104,5 @@ html[data-motion="reduced"] .map-effects,html[data-motion="reduced"] .turn-banne
 .die{box-shadow:inset 0 1px 0 #FFFFFF12,0 3px 0 #0005,0 6px 12px #0003;transform-style:preserve-3d;will-change:auto}
 .dice-pairs[data-rolling="true"] .die{will-change:transform}
 .dice-pairs[data-rolling="true"] .dice-pair>span:not(.die){opacity:0}
+
+.dice-rolling[data-rolling="true"] .dice-pair:nth-child(n+14){visibility:hidden}

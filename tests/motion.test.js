@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {GameEngine} from '../dist/engine.js';
-import {MotionDirector,countryMotion,diceMotion,diceFaceAt,DICE_ROLL_DURATION,mapEffects,mapOverlay,motionPose,routeGeometry,countryPoint,casualtyMarkers,resolveReducedMotion} from '../dist/motion.js';
+import {MotionDirector,countryMotion,diceMotion,diceFaceAt,DICE_ROLL_DURATION,mapEffects,mapOverlay,motionPose,routeGeometry,countryPoint,casualtyMarkers,resolveReducedMotion,presentationGame,rollPending} from '../dist/motion.js';
 
 function scenario(options={}){
   let time=0;
@@ -269,4 +269,35 @@ test('the mounted dice update visible pips, announce completion and stop their a
     assert.equal(tray.dataset.rolling,'false');assert.equal(status.textContent,'Roll complete');
     assert.equal(attributes.get('aria-label'),'Die roll 4');assert.equal(callbacks.size,0);motion.reset();
   }finally{globalThis.requestAnimationFrame=oldRequest;globalThis.cancelAnimationFrame=oldCancel;}
+});
+
+test('army counts, ownership, event outcomes and victory wait for the dice to settle without changing saved results',()=>{
+  const {game,engine,motion,advance}=scenario();deploy(engine);
+  for(const country of game.countries)country.owner=0;
+  const enemy=game.countries[1];enemy.owner=1;enemy.army=1;
+  engine.event('campaign','The final opponent remains.');motion.frame(game);
+  const before=structuredClone(game.countries);conquer(engine);
+  const saved=JSON.stringify(game),frame=motion.frame(game),shown=presentationGame(game,frame);
+  assert.equal(rollPending(frame),true);assert.deepEqual(shown.countries,before);
+  assert.equal(shown.winner,null);assert.equal(shown.presentationPending,true);
+  assert.equal(shown.events.some(event=>['dice','conquest','victory'].includes(event.type)&&event.id===frame.roll.id),false);
+  assert.equal(shown.events.at(-1).type,'attack');assert.equal(game.winner,0);assert.equal(JSON.stringify(game),saved);
+  advance(DICE_ROLL_DURATION);assert.equal(presentationGame(game,motion.frame(game)),game);
+});
+
+test('fast playback uses the shorter reveal clock and reduced motion shows results immediately',()=>{
+  const {game,engine,motion,advance}=scenario();deploy(engine);conquer(engine);
+  const frame=motion.frame(game,{fast:true});assert.equal(frame.roll.rollDuration,DICE_ROLL_DURATION/2);
+  advance(DICE_ROLL_DURATION/2-1);assert.equal(rollPending(motion.frame(game,{fast:true})),true);
+  advance(1);assert.equal(presentationGame(game,motion.frame(game,{fast:true})),game);
+  const reduced=scenario({reducedMotion:true});deploy(reduced.engine);conquer(reduced.engine);
+  assert.equal(presentationGame(reduced.game,reduced.motion.frame(reduced.game)),reduced.game);
+});
+
+test('multiplayer history trimming retains the new roll and serialized dice still animate',()=>{
+  const {game,engine,motion}=scenario();deploy(engine);
+  while(game.events.length<80)engine.event('turn','Recorded turn.');motion.frame(game);
+  conquer(engine);game.events=game.events.slice(-80);
+  const frame=motion.frame(game);assert.equal(frame.roll.id,game.events.findLast(event=>event.type==='dice').id);
+  assert.equal(diceMotion(frame,structuredClone(frame.roll.pairs)).className,'dice-rolling');
 });
