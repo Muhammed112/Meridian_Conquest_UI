@@ -102,12 +102,14 @@ export class NpcStrategy {
     return {reason:'Holding this turn: more soldiers are needed to challenge an enemy army.'};
   }
 
-  static battleDecision(game){
+  static battleDecision(game,{phaseLimit=20}={}){
     const battle=game.battle;
     if(!battle)return {continue:false,reason:'No attack is in progress.'};
     const from=game.countries.find(country=>country.code===battle.from),to=game.countries.find(country=>country.code===battle.to);
+    if(battle.phase>=phaseLimit)return {continue:false,reason:`Stopping the attack on ${to.name} after ${battle.phase} phases without a decisive result; regrouping for the next turn.`};
     const level=difficultyFor(game.difficulty),eliminates=holdings(game,to.owner).length===1;
     const viable=from.army>1&&from.army-1>=to.army*(eliminates?level.finishRatio:level.continueRatio)&&battleConfidence(from.army-1,to.army)>=level.retreatChance;
-    return {continue:viable,reason:viable?'Pressing the attack while victory remains within reach.':`Ending the attack on ${to.name} after heavy losses.`};
+    const forces=`${from.army-1} available attackers against ${to.army} defenders`;
+    return {continue:viable,reason:viable?`Continuing the attack on ${to.name}: ${forces}; ${eliminates?'taking this last country would eliminate a rival':'the remaining force can still challenge this defence'}.`:`Stopping the attack on ${to.name}: ${forces}; the risk is too high to keep pressing.`};
   }
 }

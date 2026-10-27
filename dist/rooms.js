@@ -1,5 +1,6 @@
 import {GameEngine} from './engine.js';
-import {commanders,catalogue,armyValue} from './data.js';
+import {commanders,catalogue,savedCountryPopulation} from './data.js';
+import {playerNickname} from './profile.js';
 
 export const ROOM_CAPACITY=10;
 const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -11,7 +12,7 @@ export function normalizeRoomCode(value){
   if(!/^[A-HJ-NP-Z2-9]{6}$/.test(code))throw new Error('Enter a valid six-character room code.');
   return code;
 }
-const playerName=user=>String(user.displayName||'Commander').trim().slice(0,32)||'Commander';
+const playerName=user=>playerNickname(user.displayName);
 export function newRoom(code,user,{name='Friends campaign',difficulty='medium'}={}){
   const now=Date.now();
   return {code,hostUid:user.uid,memberIds:[user.uid],members:{[user.uid]:{name:playerName(user)}},name:String(name).trim().slice(0,50)||'Friends campaign',difficulty:['easy','medium','hard','extreme'].includes(difficulty)?difficulty:'medium',status:'lobby',createdAt:now,updatedAt:now,revision:0,currentSeat:0,controllerUid:user.uid,winnerSeat:-1,eventCount:0,payload:''};
@@ -58,7 +59,8 @@ export function readRoomGame(room){
   g.countries=g.countries.map(country=>{
     const original=catalogue.find(c=>c.code===country.code);
     if(!original||!integer(country.owner,0,9)||!integer(country.army,0,100000))invalid();
-    return {...original,owner:country.owner,army:country.army,value:armyValue(original.population)};
+    let saved;try{saved=savedCountryPopulation(country);}catch{invalid();}
+    return {...original,...saved,owner:country.owner,army:country.army};
   });
   const codes=new Set(g.countries.map(c=>c.code));
   const pairs=value=>{if(!Array.isArray(value)||value.some(p=>!p||!integer(p.a,1,6)||!integer(p.d,1,6)))invalid();return value;};
@@ -83,8 +85,8 @@ export function moveRoom(room,uid,revision,action,values={}){
     if(action!=='bot'||uid!==room.hostUid)throw new Error('The host controls bot turns.');
     if(game.budget){const plan=e.npcReinforcements();e.event('decision',plan.reason);e.reinforce(plan.allocations);}
     else if(game.battle){
-      const plan=e.npcBattleDecision();
-      if(!plan.continue||game.battle.phase>=30){e.event('decision',plan.reason);e.stopAttack();}
+      const plan=e.npcBattleDecision({phaseLimit:30});
+      if(!plan.continue){e.event('decision',plan.reason);e.stopAttack();}
       else e.roll();
     }else if(!game.attackUsed){
       for(const move of e.npcTransfers()){e.event('decision',move.reason);e.transfer(move.from,move.to,move.amount);}

@@ -76,7 +76,7 @@ export class MotionDirector {
     this.reducedMotion=value;
     if(value)this.effects=[];
   }
-  frame(game,{view='game',replay=0,fast=false,watch=false}={}){
+  frame(game,{view='game',replay=0,fast=false,watch=false,localPlayer=0}={}){
     const time=this.now(),scale=fast?.5:1,events=game.events;
     const key=`${view}:${watch?'watch':'live'}:${game.id}`;
     this.effects=this.effects.filter(effect=>time-effect.startedAt<effect.duration);
@@ -129,7 +129,7 @@ export class MotionDirector {
     const recentMovement=effects.filter(effect=>['roll','attack','transfer'].includes(effect.kind)).at(-1);
     const movementRoute=recentMovement?{from:recentMovement.from,to:recentMovement.to,kind:recentMovement.kind==='transfer'?'transfer':'attack',active:true}:null;
     const route=view==='history'?((event?.from&&event?.to&&['attack','dice','transfer'].includes(event.type))?{from:event.from,to:event.to,kind:event.type==='transfer'?'transfer':'attack',active:true}:movementRoute):game.battle?{from:game.battle.from,to:game.battle.to,kind:'attack',active:true}:movementRoute;
-    return {effects,route,roll:latest(effects,'roll'),turn:latest(effects,'turn'),victory:latest(effects,'victory'),reduced:this.reducedMotion};
+    return {effects,route,roll:latest(effects,'roll'),turn:latest(effects,'turn'),victory:latest(effects,'victory'),reduced:this.reducedMotion,playerNames:game.playerNames,localPlayer};
   }
   mount(root,frame,{onSettled}={}){
     clearTimeout(this.unlockTimer);
@@ -146,7 +146,8 @@ export class MotionDirector {
       const announce=()=>{
         this.lastAnnouncement=announcement.id;
         const node=root.ownerDocument.getElementById('game-announcer');
-        if(node)node.textContent=announcement.kind==='victory'?`${announcement.player===0?'You':commanders[announcement.player]} ${announcement.player===0?'control':'controls'} all ten countries.`:announcement.player===0?'Your turn.':`${commanders[announcement.player]}'s turn.`;
+        const local=announcement.player===(frame.localPlayer??0),name=frame.playerNames?.[announcement.player]||commanders[announcement.player];
+        if(node)node.textContent=announcement.kind==='victory'?`${local?'You':name} ${local?'control':'controls'} all ten countries.`:local?'Your turn.':`${name}'s turn.`;
       };
       const delay=Math.max(0,(announcement.delay||0)-(announcement.age||0));
       if(delay)this.announcementTimer=setTimeout(announce,delay);else announce();
@@ -282,12 +283,13 @@ export function mapEffects(frame,countries){
 
 export function mapOverlay(frame){
   if(!frame||frame.reduced)return '';
-  const turn=frame.turn,victory=frame.victory;
-  const turnBanner=turn&&!victory?`<div class="turn-banner ${turn.player===0?'human-turn':''}" style="--banner-duration:${turn.duration}ms;--event-delay:${-turn.age}ms" aria-hidden="true"><span class="turn-banner-dot" style="background:${colours[turn.player]}"></span>${turn.player===0?'Your turn':`${escapeHTML(commanders[turn.player])} takes command`}<span class="turn-round">ROUND ${turn.round}</span></div>`:'';
+  const turn=frame.turn,victory=frame.victory,local=frame.localPlayer??0;
+  const name=player=>escapeHTML(frame.playerNames?.[player]||commanders[player]);
+  const turnBanner=turn&&!victory?`<div class="turn-banner ${turn.player===local?'human-turn':''}" style="--banner-duration:${turn.duration}ms;--event-delay:${-turn.age}ms" aria-hidden="true"><span class="turn-banner-dot" style="background:${colours[turn.player]}"></span>${turn.player===local?'Your turn':`${name(turn.player)} takes command`}<span class="turn-round">ROUND ${turn.round}</span></div>`:'';
   if(!victory)return turnBanner;
   const delay=victory.delay-victory.age;
   const confetti=Array.from({length:30},(_,i)=>`<i style="left:${5+(i*37%90)}%;--drift:${(i*43%150)-75}px;--twist:${(i%2?1:-1)*(180+i*29)}deg;--confetti-delay:${delay+(i%6)*35*victory.scale}ms;--confetti-duration:${2100*victory.scale}ms;background:${[colours[victory.player],'#D4AF37','#E9CD76'][i%3]}"></i>`).join('');
-  return `<div class="victory-overlay" style="--victory-delay:${delay}ms;--victory-duration:${2800*victory.scale}ms" aria-hidden="true"><div class="victory-halo"></div><div class="confetti-field">${confetti}</div><div class="victory-banner"><span>Meridian Conquest</span><strong>${victory.player===0?'The world is yours.':`${escapeHTML(commanders[victory.player])} prevails.`}</strong><span>10 countries · 1 commander</span></div></div>`;
+  return `<div class="victory-overlay" style="--victory-delay:${delay}ms;--victory-duration:${2800*victory.scale}ms" aria-hidden="true"><div class="victory-halo"></div><div class="confetti-field">${confetti}</div><div class="victory-banner"><span>Meridian Conquest</span><strong>${victory.player===local?'The world is yours.':`${name(victory.player)} prevails.`}</strong><span>10 countries · 1 commander</span></div></div>`;
 }
 
 export function turnMotion(frame){

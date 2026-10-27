@@ -12,6 +12,11 @@ test('campaign and event IDs remain valid when an HTTP preview lacks randomUUID'
 });
 
 test('population bands include their upper bounds',()=>{assert.equal(armyValue(5),1);assert.equal(armyValue(5.01),2);assert.equal(armyValue(150),8);assert.equal(armyValue(150.01),9);});
+test('a new campaign records the chosen player nickname in its roster and turn reports',()=>{
+  const game=GameEngine.create('Named campaign','ZA',false,'medium','Meridian Goat');
+  assert.equal(game.playerNames[0],'Meridian Goat');assert.ok(game.events[0].text.startsWith(game.playerNames[game.events[0].player]));
+  assert.equal(JSON.parse(JSON.stringify(game)).playerNames[0],'Meridian Goat');
+});
 test('paired dice preserve roll order and ties cause no loss',()=>{const values=[1,2,4,3,5,5];const result=BattleEngine.resolve(4,5,()=>values.shift());assert.deepEqual(result.pairs.map(p=>[p.a,p.d]),[[1,2],[4,3],[5,5]]);assert.equal(result.attackerLoss,1);assert.equal(result.defenderLoss,1);});
 test('one soldier is always reserved in the attacking country',()=>{const result=BattleEngine.resolve(2,5,()=>3);assert.equal(result.pairs.length,1);assert.throws(()=>BattleEngine.resolve(1,5));});
 test('first round grants no reinforcements and later rounds grant two per country',()=>{const g=GameEngine.create('Test','ZA');assert.equal(g.budget,0);g.round=2;g.position=g.order.indexOf(0);g.turnStarted=false;const e=new GameEngine(g);e.beginTurn();assert.equal(g.budget,2);e.beginTurn();assert.equal(g.budget,2);});

@@ -2,9 +2,10 @@ import {aiConfig} from './ai-config.js';
 import {COMMENTARY_VERSION,CommentaryQueue,commentaryContext,createGeminiGenerator,recentCommentaryTasks} from './commentary.js?v=match-commentary-20261026-1';
 import {createRoomService} from './rooms.js';
 import {firebaseConfig} from './firebase-config.js';
+import {normalizeNickname} from './profile.js';
 
 export const cloudEnabled=Boolean(firebaseConfig?.projectId);
-export async function connectCloud({onSession,onCommentary,onError,onAIStatus=()=>{},onLoadState=()=>{},config=firebaseConfig,aiSettings=aiConfig,loadSDK,loadTimeout=30000}){
+export async function connectCloud({onSession,onCommentary,onError,onProfile=()=>{},onAIStatus=()=>{},onLoadState=()=>{},config=firebaseConfig,aiSettings=aiConfig,loadSDK,loadTimeout=30000}){
   if(!config?.projectId)return null;
   const base='https://www.gstatic.com/firebasejs/13.0.0/';
   const [appSDK,authSDK,dbSDK]=await Promise.all(['firebase-app.js','firebase-auth.js','firebase-firestore.js'].map(file=>loadSDK?loadSDK(file):import(base+file)));
@@ -42,13 +43,22 @@ export async function connectCloud({onSession,onCommentary,onError,onAIStatus=()
       const email=String(values.get('email')||'').trim(),password=String(values.get('password')||'');
       if(kind==='reset')return authSDK.sendPasswordResetEmail(auth,email);
       if(kind==='signup'){
+        const nickname=normalizeNickname(values.get('name'));
         const result=await authSDK.createUserWithEmailAndPassword(auth,email,password);
-        await authSDK.updateProfile(result.user,{displayName:String(values.get('name')||'Commander').trim()});
+        await authSDK.updateProfile(result.user,{displayName:nickname});
+        if(user?.uid===result.user.uid)onProfile(result.user);
         return result;
       }
       return authSDK.signInWithEmailAndPassword(auth,email,password);
     },
     signOut:()=>authSDK.signOut(auth),
+    async updateNickname(value){
+      const nickname=normalizeNickname(value),account=user;
+      if(!account)throw new Error('Sign in to save your player nickname.');
+      await authSDK.updateProfile(account,{displayName:nickname});
+      if(user?.uid!==account.uid)throw new Error('Your account changed. Sign in again to update your nickname.');
+      onProfile(account);return nickname;
+    },
     commentary:narrator,
     requestCommentary(game,{roomCode}={}){
       if(!user||!ready)throw new Error('Sign in and wait for your campaign to load.');

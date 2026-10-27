@@ -5,10 +5,15 @@
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
     "check": "node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --check dist/cloud.js && node --check functions/index.js && node --check functions/commentary.js && node --check dist/rooms.js && node --check dist/multiplayer.js && node --check dist/commentary.js && node --test tests/*.test.js",
-    "fix-map-seams": "node scripts/fix-map-seams.mjs"
+    "fix-map-seams": "node scripts/fix-map-seams.mjs",
+    "populations:update": "node scripts/update-populations.mjs --write-bundle",
+    "catalogue:refresh": "node scripts/build-country-catalogue.mjs",
+    "populations:publish": "node scripts/update-populations.mjs --publish-admin"
   },
   "devDependencies": {
     "d3-geo": "^3.1.1",
+    "libsodium-wrappers": "^0.8.2",
+    "parse5": "^7.3.0",
     "topojson-client": "^3.1.0"
   }
 }

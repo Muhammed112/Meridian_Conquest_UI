@@ -301,3 +301,13 @@ test('multiplayer history trimming retains the new roll and serialized dice stil
   const frame=motion.frame(game);assert.equal(frame.roll.id,game.events.findLast(event=>event.type==='dice').id);
   assert.equal(diceMotion(frame,structuredClone(frame.roll.pairs)).className,'dice-rolling');
 });
+test('multiplayer turn and victory banners use recorded nicknames and the viewing player seat',()=>{
+  const names=['Host <Ace>','Friend & Rival'];
+  const turn={player:0,round:1,duration:1650,age:0};
+  const markup=mapOverlay({turn,playerNames:names,localPlayer:1});
+  assert.match(markup,/Host &lt;Ace&gt; takes command/);assert.doesNotMatch(markup,/Your turn|<Ace>/);
+  assert.match(mapOverlay({turn:{...turn,player:1},playerNames:names,localPlayer:1}),/Your turn/);
+  const victory={player:1,delay:0,age:0,scale:1};
+  assert.match(mapOverlay({victory,playerNames:names,localPlayer:0}),/Friend &amp; Rival prevails/);
+  assert.match(mapOverlay({victory,playerNames:names,localPlayer:1}),/The world is yours/);
+});

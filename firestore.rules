@@ -1,8 +1,18 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
-    function signedIn() { return request.auth != null; }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function signedIn() { return request.auth != null && request.auth.token.get('populationUpdater',false) != true; }
+    // A separate scheduled updater can publish this public reference document.
+    // Its credentials cannot read or modify another player's games or rooms.
+    match /publicData/populations {
+      allow get: if true;
+      allow list, delete: if false;
+      allow create, update: if request.auth != null && request.auth.token.populationUpdater == true
+        && request.resource.data.keys().hasOnly(['payload','updatedAt'])
+        && request.resource.data.payload is string && request.resource.data.payload.size() < 10000
+        && request.resource.data.updatedAt == request.time;
+    }
     function validAIReport(eventId) {
       let d=request.resource.data;
       return d.keys().hasOnly(['eventId','eventType','text','status','source','model','authorUid','createdAt'])

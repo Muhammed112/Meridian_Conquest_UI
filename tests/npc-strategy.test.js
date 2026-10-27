@@ -11,6 +11,17 @@ function arena(){
 const applyTransfers=e=>{for(const move of e.npcTransfers())e.transfer(move.from,move.to,move.amount);};
 const armyTotal=game=>game.countries.reduce((sum,country)=>sum+country.army,0);
 
+test('battle decisions explain continuing and stopping, including the persisted phase limit after reload',()=>{
+  const e=arena(),from=e.game.countries[1],to=e.game.countries[2];from.army=20;to.army=5;
+  e.startAttack(from.code,to.code);const continuing=e.npcBattleDecision();
+  assert.equal(continuing.continue,true);assert.match(continuing.reason,/19 available attackers against 5 defenders/);assert.match(continuing.reason,/Continuing/);
+  for(let phase=0;phase<20;phase++)e.roll(()=>3);
+  const restored=new GameEngine(JSON.parse(JSON.stringify(e.game))),stopping=restored.npcBattleDecision();
+  assert.equal(stopping.continue,false);assert.match(stopping.reason,/Stopping.*20 phases/);assert.doesNotMatch(stopping.reason,/Continuing|Pressing/);
+  assert.equal(restored.npcBattleDecision({phaseLimit:30}).continue,true);
+  restored.game.battle.phase=30;assert.match(restored.npcBattleDecision({phaseLimit:30}).reason,/30 phases/);
+});
+
 test('NPC reinforcement prepares an offensive and retains troops in its other holding',()=>{
   const e=arena(),[weak,strong]=e.game.countries;
   Object.assign(weak,{owner:1,army:1});Object.assign(strong,{owner:1,army:20});e.game.budget=4;

@@ -1,0 +1,10 @@
+Country names, ISO codes and geographic coordinates: mledoze/countries
+https://raw.githubusercontent.com/mledoze/countries/6031f5df137c41c76d180c55a0782185ae3ed05b/countries.json
+Licensed under Open Data Commons Open Database License (ODbL) 1.0.
+The generated metadata database is available under the same licence at ../country-catalogue.js.
+Original Meridian country labels and marker positions are retained for saved-game compatibility.
+
+Population figures are read separately from the exam's specified source:
+https://www.worldometers.info/world-population/population-by-country/
+Estimate year: 2026. Figures are annual estimates, not live clocks.
+Countries too small for the bundled map's outlines remain visible and selectable as markers and roster entries.

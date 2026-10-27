@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {connectCloud} from '../dist/cloud.js';
 
-async function fixture({persistenceError=null,read=async()=>({docs:[]}),loadTimeout=30000}={}){
+async function fixture({persistenceError=null,read=async()=>({docs:[]}),loadTimeout=30000,updateProfile=async(account,changes)=>Object.assign(account,changes)}={}){
   let session,fail=false;
-  const writes=[],subscriptions=[],errors=[],sessions=[],loadStates=[];
+  const writes=[],subscriptions=[],errors=[],sessions=[],loadStates=[],profiles=[];
   const sessionPersistence={type:'SESSION'},authInstance={};
   const ref=(...segments)=>{const path=segments.filter(s=>s!==db).map(s=>s.path||s).join('/');return {path};};
   const db={};
@@ -18,6 +18,7 @@ async function fixture({persistenceError=null,read=async()=>({docs:[]}),loadTime
       if(persistenceError)throw persistenceError;
     },
     onAuthStateChanged:(_,callback)=>{session=callback;},
+    updateProfile,
     collection:ref,doc:ref,query:value=>value,orderBy:()=>({}),
     getDocs:read,
     onSnapshot:(target)=>{subscriptions.push(target.path);return ()=>{};},
@@ -26,14 +27,37 @@ async function fixture({persistenceError=null,read=async()=>({docs:[]}),loadTime
       return {set:(target,value)=>batch.push([target.path,value]),commit:async()=>{if(fail)throw new Error('offline');writes.push(batch);}};
     }
   };
-  const service=await connectCloud({config:{projectId:'test'},aiSettings:{enabled:false},loadSDK:async()=>sdk,loadTimeout,onSession:(user,games,ready)=>sessions.push({user,games,ready}),onLoadState:state=>loadStates.push(state),onCommentary:()=>{},onError:e=>errors.push(e)});
-  return {service,writes,subscriptions,errors,sessions,loadStates,login:uid=>session(uid?{uid}:null),setFailure:value=>{fail=value;}};
+  const service=await connectCloud({config:{projectId:'test'},aiSettings:{enabled:false},loadSDK:async()=>sdk,loadTimeout,onSession:(user,games,ready)=>sessions.push({user,games,ready}),onProfile:user=>profiles.push({uid:user.uid,displayName:user.displayName}),onLoadState:state=>loadStates.push(state),onCommentary:()=>{},onError:e=>errors.push(e)});
+  return {service,writes,subscriptions,errors,sessions,loadStates,profiles,login:uid=>session(uid?{uid,displayName:'Original nickname'}:null),setFailure:value=>{fail=value;}};
 }
 const game=()=>({id:'g1',updatedAt:123,countries:[{code:'ZA',name:'South Africa'}],events:[{id:'e1',type:'dice',text:'Recorded losses',commentary:'Generated text',board:[{code:'ZA',army:5}]}]});
 
 test('account restoration uses tab-session persistence before accessing private campaigns',async()=>{
   const f=await fixture();await f.login('owner');
   assert.equal(f.service.user.uid,'owner');assert.equal(f.service.ready,true);
+});
+
+test('nickname changes update the account without reloading or rewriting its campaign history',async()=>{
+  const f=await fixture();await f.login('owner');const sessions=f.sessions.length;
+  assert.equal(await f.service.updateNickname('  Meridian Goat  '),'Meridian Goat');
+  assert.equal(f.service.user.displayName,'Meridian Goat');assert.deepEqual(f.profiles,[{uid:'owner',displayName:'Meridian Goat'}]);
+  assert.equal(f.writes.length,0);assert.equal(f.sessions.length,sessions);assert.equal(f.service.ready,true);
+});
+test('invalid and signed-out nickname updates never reach Firebase',async()=>{
+  let calls=0;const f=await fixture({updateProfile:async()=>{calls++;}});
+  await assert.rejects(f.service.updateNickname('Nickname'),/Sign in/);await f.login('owner');
+  for(const name of ['','  ','x','a'.repeat(33),'bad\nname'])await assert.rejects(f.service.updateNickname(name),/2 and 32/);
+  assert.equal(calls,0);assert.equal(f.profiles.length,0);
+});
+test('failed nickname writes retain the old profile and do not report success',async()=>{
+  const f=await fixture({updateProfile:async()=>{throw new Error('offline');}});await f.login('owner');
+  await assert.rejects(f.service.updateNickname('New nickname'),/offline/);assert.equal(f.service.user.displayName,'Original nickname');assert.equal(f.profiles.length,0);
+});
+test('an old-account nickname response cannot replace the next signed-in player profile',async()=>{
+  let release,started;const pending=new Promise(resolve=>{release=resolve;}),writing=new Promise(resolve=>{started=resolve;});
+  const f=await fixture({updateProfile:async(account,changes)=>{started();await pending;Object.assign(account,changes);}});await f.login('old');
+  const updating=f.service.updateNickname('Old player nickname');await writing;await f.login('new');release();
+  await assert.rejects(updating,/account changed/);assert.equal(f.service.user.uid,'new');assert.equal(f.service.user.displayName,'Original nickname');assert.equal(f.profiles.length,0);
 });
 
 test('unavailable session persistence prevents authentication startup',async()=>{

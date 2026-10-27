@@ -2,7 +2,21 @@
 
 The app supports Firebase Email/Password Authentication, account-specific Firestore campaigns, immutable event documents and Gemini commentary through Firebase AI Logic. Without a configuration in `dist/firebase-config.js`, the original local demo still works.
 
-## Connected project
+## Population updates
+
+The population feature supports all 234 countries and territories in the required Worldometers table, including microstates. Run `npm run dev` for local source checks at startup and daily while the server runs. The last validated response is cached outside `dist` at `.firebase/population-cache.json`, and `/population-data.json` serves it immediately to the local app. Existing games retain their original population and reward fields. Source checks pause when this server is off. Hosted clients use the bundled snapshot and public Firestore reference; GitHub's scheduled source checks remain inactive until their workflow is pushed.
+
+The optional GitHub workflow `.github/workflows/populations.yml` is prepared locally and **not activated**. The public reference `publicData/populations`, restricted updater account and encrypted GitHub Secrets have been configured and tested. A hosted/static client can read the reference without sign-in; only the dedicated updater can publish it. No administrator credential is stored in GitHub or the browser.
+
+One-time setup after `npm ci` and `firebase login`:
+
+1. Deploy the rules: `firebase deploy --only firestore:rules --project meridian-conquest-m112`.
+2. Run `node scripts/configure-populations.mjs`. It uses the existing Git Credential Manager sign-in to encrypt two GitHub Actions Secrets, `POPULATION_UPDATER_EMAIL` and `POPULATION_UPDATER_PASSWORD`. The dedicated Firebase account has the `populationUpdater` custom claim. Rules exclude it from campaign and room access and allow it to update only the public reference document. No administrator credential is stored in GitHub or the browser.
+3. Push the workflow to the default branch. In GitHub Actions, run **Update country populations** once and check its result. It subsequently runs daily at 05:23 UTC. Source errors leave the previous public document intact; GitHub's workflow log records the failure.
+
+`npm run populations:update` refreshes the bundled offline snapshot without writing to Firebase. Redeploy Hosting to distribute a new bundle. The daily workflow updates the public reference automatically without a Hosting deployment. Missing rows, changed headers, noninteger counts, older timestamps/years and per-country changes over 25% are rejected. Review a legitimate large revision manually before replacing the baseline. Firebase remains on Spark; the job uses GitHub Actions minutes, not Cloud Functions. Disable the workflow to stop future source checks, or rerun the configuration script to rotate its password and GitHub Secrets.
+
+## Connected project details
 
 - Firebase project: `meridian-conquest-m112` ([console](https://console.firebase.google.com/project/meridian-conquest-m112/overview))
 - Web app: `Meridian Conquest Web`
@@ -10,9 +24,17 @@ The app supports Firebase Email/Password Authentication, account-specific Firest
 - Local default project: `.firebaserc`
 - Public app configuration: `dist/firebase-config.js`
 
+## Examiner database access
+
+The PDF's three examiner accounts have `roles/datastore.viewer` on this project: `ammarcanani@gmail.com`, `mc.tanner@uct.ac.za`, and `ridewaan.hanslo@uct.ac.za`. This grants read-only Firestore access, including database browsing, without document creation, edits or deletion. They can open the [Firestore console](https://console.cloud.google.com/firestore/databases?project=meridian-conquest-m112) using those Google accounts. Existing project permissions were preserved; the pre-change IAM policy is backed up privately under `.firebase/iam-before-examiner-access.json` and must not be deployed or included in a source submission.
+
+`node scripts/grant-examiner-access.mjs` previews the exact role and recipients. The `--apply` option adds only those grants and verifies the result; it does not create application login accounts or send email.
+
 Email/password Authentication is enabled. Authorized domains are `localhost`, `meridian-conquest-m112.firebaseapp.com` and `meridian-conquest-m112.web.app`. Firestore security rules and indexes are deployed.
 
 Sign-in uses Firebase session persistence. Refreshing the page keeps the user signed in; closing the signed-in tab or browser window ends that session. Campaigns remain saved in Firestore and load after the next sign-in.
+
+Player nicknames are saved on the Firebase Authentication profile (`displayName`). Users choose a nickname at signup or edit it under **Settings → Player nickname**. New single-player campaigns record it in `playerNames`; room creation and joining copy that same account nickname into the room's members. Updating a nickname does not reload or rewrite saved campaigns, and existing rooms keep their recorded names. No additional Firestore permission is required for profile editing.
 
 The project remains on the free Spark plan with billing disabled. Gemini commentary uses Firebase AI Logic with the Gemini Developer API, not Cloud Functions. The app is published at https://meridian-conquest-m112.web.app; multiplayer is available at https://meridian-conquest-m112.web.app/#multiplayer.
 

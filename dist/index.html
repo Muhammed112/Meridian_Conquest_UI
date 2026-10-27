@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="./styles.css?v=battle-reveal-20261026-1">
   <link rel="stylesheet" href="./motion.css?v=battle-reveal-20261026-1">
   <link rel="stylesheet" href="./difficulty.css?v=rooms-20261025-1">
-  <link rel="stylesheet" href="./multiplayer.css?v=rooms-20261025-1">
+  <link rel="stylesheet" href="./multiplayer.css?v=player-nickname-20261027-1">
   <link rel="stylesheet" href="./audio.css?v=rooms-20261025-1">
 </head>
 <body>
@@ -24,6 +24,17 @@
   <dialog id="settings-dialog" class="audio-dialog" aria-labelledby="settings-title">
     <div class="help-head"><div><div class="eyebrow">Make it your own</div><h2 id="settings-title">Settings.</h2></div><button type="button" class="icon-button" data-action="close-settings" aria-label="Close settings">✕</button></div>
     <div class="audio-dialog-body">
+      <section class="settings-section" aria-labelledby="settings-player-title">
+        <h3 id="settings-player-title">Player nickname</h3>
+        <p class="audio-intro">Your nickname carries over to new campaigns and multiplayer rooms.</p>
+        <form id="nickname-form">
+          <label class="field-label" for="player-nickname">Nickname</label>
+          <input class="field" id="player-nickname" name="nickname" autocomplete="nickname" minlength="2" maxlength="32" placeholder="Choose your player nickname" aria-describedby="nickname-help nickname-status" required>
+          <p class="field-help" id="nickname-help">2–32 characters. Existing matches keep their recorded player names.</p>
+          <button type="submit" class="btn btn-sm">Save nickname</button>
+          <p id="nickname-status" class="audio-status" role="status"></p>
+        </form>
+      </section>
       <section class="settings-section" aria-labelledby="settings-animation-title">
         <h3 id="settings-animation-title">Animations</h3>
         <p class="audio-intro">Choose full map effects or reduced motion.</p>
@@ -50,6 +61,6 @@
       </section>
     </div>
   </dialog>
-  <script type="module" src="./app.js?v=match-commentary-20261026-1"></script>
+  <script type="module" src="./app.js?v=full-catalogue-20261027-1"></script>
 </body>
 </html>

@@ -1,9 +1,16 @@
-import {catalogue,armyValue,commanders} from './data.js';
+import {catalogue,armyValue,commanders,populationReference} from './data.js';
 import {NpcStrategy} from './npc-strategy.js';
 import {difficultyFor} from './difficulty.js';
+import {playerNickname} from './profile.js';
 
 export const CAMPAIGN_STORAGE_KEY='meridian-conquest-ui-v2';
 export const LEGACY_CAMPAIGN_STORAGE_KEY='meridian-conquest-ui-v1';
+
+// Also correct the display of older reports without rewriting saved events.
+export function reportText(game,event){
+  return event.type==='turn'&&event.player===0&&game.mode!=='multiplayer'&&typeof event.text==='string'
+    ?event.text.replace(/^You['’]s turn\b/,'Your turn'):event.text;
+}
 
 export function createRecordId(source=globalThis.crypto){
   if(typeof source.randomUUID==='function')return source.randomUUID();
@@ -36,13 +43,15 @@ export class BattleEngine {
 
 export class GameEngine {
   constructor(game){this.game=game;}
-  static create(name,start='ZA',sample=false,difficulty='medium'){
+  static create(name,start='ZA',sample=false,difficulty='medium',nickname=null){
     const chosen=catalogue.find(x=>x.code===start)||catalogue[0];
-    let others=sample?catalogue.slice(0,10).filter(x=>x.code!==chosen.code):catalogue.filter(x=>x.code!==chosen.code).map(x=>({x,r:Math.random()})).sort((a,b)=>a.r-b.r).slice(0,9).map(({x})=>x);
+    let others=sample?catalogue.slice(0,10).filter(x=>x.code!==chosen.code).slice(0,9):catalogue.filter(x=>x.code!==chosen.code).map(x=>({x,r:Math.random()})).sort((a,b)=>a.r-b.r).slice(0,9).map(({x})=>x);
     if(others.length<9)others.push(...catalogue.filter(x=>x.code!==chosen.code&&!others.includes(x)).slice(0,9-others.length));
     const order=[0,1,2,3,4,5,6,7,8,9];
     if(!sample){const first=Math.floor(Math.random()*10);order.push(...order.splice(0,first));}
     const game={id:createRecordId(),name:name.trim()||'New Meridian',start:chosen.code,difficulty:difficultyFor(difficulty).id,round:1,position:0,order,turnStarted:false,budget:0,attackUsed:false,battle:null,winner:null,status:'active',createdAt:Date.now(),updatedAt:Date.now(),events:[],countries:[chosen,...others].map((c,i)=>({...c,owner:i,value:armyValue(c.population),army:armyValue(c.population)}))};
+    game.populationSource={...populationReference};
+    if(nickname)game.playerNames=[playerNickname(nickname),...commanders.slice(1)];
     const engine=new GameEngine(game);
     if(sample){game.round=3;game.countries[0].army=9;game.countries[4].owner=0;game.countries[4].army=3;game.countries[1].army=4;engine.event('campaign','A new round begins. Every decision redraws the world.');engine.event('conquest',`${game.countries[4].name} is now under your command.`,{country:game.countries[4].code});}
     engine.beginTurn();
@@ -54,7 +63,8 @@ export class GameEngine {
   beginTurn(){
     const g=this.game;if(g.turnStarted||g.winner!==null)return;
     g.turnStarted=true;g.attackUsed=false;g.battle=null;g.budget=g.round>1?this.owned().length*2:0;
-    this.event('turn',`${(g.playerNames||commanders)[this.current]}'s turn${g.budget?` · ${g.budget} reinforcements available`:''}.`);
+    const text=`${(g.playerNames||commanders)[this.current]}'s turn${g.budget?` · ${g.budget} reinforcements available`:''}.`;
+    this.event('turn',reportText(g,{type:'turn',player:this.current,text}));
   }
   reinforce(allocations){
     const g=this.game;const owned=this.owned();
@@ -104,5 +114,5 @@ export class GameEngine {
   }
   npcReinforcements(){return NpcStrategy.reinforcements(this.game,this.current);}
   npcTransfers(){return NpcStrategy.defenceTransfers(this.game,this.current);}
-  npcBattleDecision(){return NpcStrategy.battleDecision(this.game);}
+  npcBattleDecision(options){return NpcStrategy.battleDecision(this.game,options);}
 }

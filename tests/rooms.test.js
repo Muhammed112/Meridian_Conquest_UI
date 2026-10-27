@@ -13,6 +13,18 @@ test('room codes are six unambiguous characters and pasted codes normalize',()=>
   assert.match(roomCode(),/^[A-HJ-NP-Z2-9]{6}$/);assert.equal(normalizeRoomCode(' abc234 '),'ABC234');
   for(const code of ['ABCD','ABC01I','ABC234/other','<html>'])assert.throws(()=>normalizeRoomCode(code));
 });
+
+test('account nicknames carry over to the lobby, started game and room reload for hosts and friends',()=>{
+  const namedHost={uid:'host',displayName:'Meridian Goat'},namedFriend={uid:'friend',displayName:'Night Owl'};
+  const room=joinRoom(newRoom('ABC234',namedHost),namedFriend);
+  assert.equal(room.members.host.name,'Meridian Goat');assert.equal(room.members.friend.name,'Night Owl');
+  const started=startRoom(room,'host').room,game=readRoomGame(started);
+  assert.deepEqual(game.playerNames.slice(0,2),['Meridian Goat','Night Owl']);
+  assert.ok(game.events[0].text.startsWith(game.playerNames[game.events[0].player]));
+  namedFriend.displayName='Future nickname';
+  assert.equal(readRoomGame(started).playerNames[1],'Night Owl','Existing matches retain the recorded nickname');
+  assert.equal(joinRoom(newRoom('BCD345',namedHost),namedFriend).members.friend.name,'Future nickname');
+});
 test('friends join once, capacity is ten, and host start fills remaining countries with bots',()=>{
   let room=newRoom('ABC234',host);
   for(let n=1;n<10;n++)room=joinRoom(room,{uid:'p'+n,displayName:'Player '+n});
