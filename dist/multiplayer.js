@@ -14,6 +14,7 @@ export function createMultiplayerUI({
   presentGame = (game) => game,
   isRolling = () => false,
   getReportTab = () => 'field',
+  getReportDock = () => ({}),
 }) {
   const button = (label, action, disabled = false) =>
     /* HTML */ `<button
@@ -518,6 +519,7 @@ export function createMultiplayerUI({
               ></section
             >${renderReports(g, {
               tab: getReportTab(),
+              dock: getReportDock(),
               badge: '<span class="badge live">Live</span>',
               live: true,
               limit: 16,

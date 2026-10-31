@@ -91,6 +91,7 @@ export function createBattleViews(context) {
 
     return renderReports(game, {
       tab: state.reportTab,
+      dock: state.reportDock,
       badge: `<span class="badge live">${state.watch ? 'Recorded' : 'Campaign log'}</span>`,
       live: cloudEnabled && !state.watch,
       commentaryAction:
@@ -379,12 +380,6 @@ export function createBattleViews(context) {
               >${state.watch ? 'Shared campaign / Viewing only' : 'Active campaign / Single player'}
               ${renderDifficultyBadge(game.difficulty)}</div
             ><h1>${escapeHTML(game.name)}</h1></div
-          ><div class="nav-actions"
-            >${renderButton(`${renderIcon('fast')} ${state.fast ? 'Normal speed' : 'Fast forward'}`, 'fast', 'btn-sm', state.watch ? 'disabled' : '')}${renderButton(`${renderIcon('copy')} Share`, 'share', 'btn-sm', `data-id="${game.id}"`)}<a
-              href="#history/${state.watch ? 'watch' : game.id}"
-              class="btn btn-sm"
-              >${renderIcon('history')} Replay</a
-            ></div
           ></div
         >${
           state.watch

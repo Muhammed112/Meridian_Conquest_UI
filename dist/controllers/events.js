@@ -3,15 +3,30 @@ import { cloudEnabled } from '../cloud.js?v=match-commentary-20261026-1';
 import { GameEngine } from '../engine.js';
 import { difficultyFor } from '../difficulty.js';
 import { normalizeNickname } from '../profile.js';
-import { selectReportTab } from '../ui/reports.js';
+import { selectReportTab, setReportsDock } from '../ui/reports.js';
 
 // Register the UI actions once. The application owns state and services.
 export function bindAppEvents(context) {
   function activateReportTab(button) {
+    const panel = button.closest('[data-reports-panel]');
+    if (context.state.reportDock.pinned) {
+      context.state.reportDock.collapsed = false;
+      setReportsDock(panel, context.state.reportDock);
+    }
     context.state.reportTab = button.dataset.reportTab;
-    selectReportTab(button.closest('[data-reports-panel]'), context.state.reportTab);
+    selectReportTab(panel, context.state.reportTab);
   }
   document.addEventListener('click', async (event) => {
+    const reportControl = event.target.closest('[data-report-control]');
+    if (reportControl) {
+      const dock = context.state.reportDock;
+      if (reportControl.dataset.reportControl === 'pin') {
+        dock.pinned = !dock.pinned;
+        dock.collapsed = false;
+      } else dock.collapsed = !dock.collapsed;
+      setReportsDock(reportControl.closest('[data-reports-panel]'), dock);
+      return;
+    }
     const reportTab = event.target.closest('[data-report-tab]');
     if (reportTab) {
       activateReportTab(reportTab);

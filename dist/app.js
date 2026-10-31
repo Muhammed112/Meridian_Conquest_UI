@@ -27,9 +27,10 @@ import { renderIcon } from './ui/components.js';
 import { encodeSnapshot, decodeSnapshot } from './snapshots.js';
 import { createNavigation } from './ui/navigation.js';
 import { createMapView } from './ui/map.js';
+import { syncMapLabels } from './ui/map-labels.js';
 import { createCampaignViews } from './ui/campaigns.js';
 import { createBattleViews } from './ui/battle.js';
-import { updateReportsCommentary } from './ui/reports.js';
+import { updateReportsCommentary, syncReportsDock } from './ui/reports.js';
 import { createNpcController } from './controllers/npcs.js';
 
 // Getters keep view dependencies current across account changes, routing and animation frames.
@@ -216,6 +217,7 @@ const state = {
   setupGame: null,
   replay: 0,
   reportTab: 'field',
+  reportDock: { pinned: false, collapsed: false },
   fast: false,
   npcNote: '',
   watch: null,
@@ -271,6 +273,7 @@ const multiplayer = createMultiplayerUI({
   presentGame: (g) => presentationGame(g, motionFrame),
   isRolling: () => rollPending(motionFrame),
   getReportTab: () => state.reportTab,
+  getReportDock: () => state.reportDock,
 });
 
 const currentGame = () =>
@@ -398,6 +401,8 @@ function render() {
                 : state.view === 'history'
                   ? history(g)
                   : welcome();
+  syncReportsDock(app);
+  syncMapLabels(app);
   if (motionFrame) motionDirector.mount(app, motionFrame, { onSettled: render });
   audioDirector.observe(
     g,

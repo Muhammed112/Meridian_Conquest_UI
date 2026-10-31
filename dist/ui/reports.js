@@ -1,4 +1,14 @@
 import { escapeHTML } from '../html.js';
+import { renderIcon } from './components.js';
+
+let dockObserver;
+
+function mapTopInset(column) {
+  const roster = column.closest('.board-grid')?.querySelector('.roster-panel');
+  if (roster && roster.getBoundingClientRect().right > column.getBoundingClientRect().left)
+    return roster.offsetHeight + 12;
+  return 16;
+}
 
 function commentaryRows(game, limit) {
   const reports = game.events
@@ -28,11 +38,23 @@ function commentaryRows(game, limit) {
 
 export function renderReports(
   game,
-  { fieldReports, tab = 'field', badge = '', commentaryAction = '', live = false, limit = 12 },
+  {
+    fieldReports,
+    tab = 'field',
+    badge = '',
+    commentaryAction = '',
+    live = false,
+    limit = 12,
+    dock = {},
+  },
 ) {
   const active = tab === 'ai' ? 'ai' : 'field';
   const prefix = 'reports-' + escapeHTML(game.id);
-  return /* HTML */ `<section class="panel reports-panel" data-reports-panel
+  const collapsed = Boolean(dock.pinned && dock.collapsed);
+  return /* HTML */ `<section
+    class="panel reports-panel ${dock.pinned ? 'is-pinned' : ''}"
+    data-reports-panel
+    data-reports-collapsed="${collapsed}"
     ><div class="activity-head reports-head"
       ><div class="report-tabs" role="tablist" aria-label="Battle reports"
         >${[
@@ -57,31 +79,138 @@ export function renderReports(
       ><div class="commentary-actions"
         >${badge}<span data-commentary-actions ${active === 'ai' ? '' : 'hidden'}
           >${commentaryAction}</span
+        ><button
+          type="button"
+          class="btn btn-sm"
+          data-report-control="pin"
+          aria-pressed="${Boolean(dock.pinned)}"
+          >${dock.pinned ? 'Unpin' : 'Pin reports'}</button
+        ><span data-report-collapse-control ${dock.pinned ? '' : 'hidden'}
+          ><button
+            type="button"
+            class="btn btn-sm reports-collapse"
+            data-report-control="collapse"
+            aria-expanded="${!collapsed}"
+            aria-controls="${prefix}-content"
+            aria-label="${collapsed ? 'Expand reports' : 'Collapse reports'}"
+            title="${collapsed ? 'Expand reports' : 'Collapse reports'}"
+            >${renderIcon('chevron')}</button
+          ></span
         ></div
       ></div
-    ><div
-      id="${prefix}-panel-field"
-      role="tabpanel"
-      tabindex="0"
-      aria-labelledby="${prefix}-tab-field"
-      data-report-panel="field"
-      ${active === 'field' ? '' : 'hidden'}
-      ><div class="activity-feed">${fieldReports}</div></div
-    ><div
-      id="${prefix}-panel-ai"
-      role="tabpanel"
-      tabindex="0"
-      aria-labelledby="${prefix}-tab-ai"
-      data-report-panel="ai"
-      ${active === 'ai' ? '' : 'hidden'}
-      >${live ? '<p class="commentary-feed-status" data-ai-feed-status role="status"></p>' : ''}<div
-        class="activity-feed"
-        data-commentary-feed="${escapeHTML(game.id)}"
-        data-commentary-limit="${limit}"
-        >${commentaryRows(game, limit)}</div
+    ><div id="${prefix}-content" data-report-content ${collapsed ? 'hidden' : ''}
+      ><div
+        id="${prefix}-panel-field"
+        role="tabpanel"
+        tabindex="0"
+        aria-labelledby="${prefix}-tab-field"
+        data-report-panel="field"
+        ${active === 'field' ? '' : 'hidden'}
+        ><div class="activity-feed">${fieldReports}</div></div
+      ><div
+        id="${prefix}-panel-ai"
+        role="tabpanel"
+        tabindex="0"
+        aria-labelledby="${prefix}-tab-ai"
+        data-report-panel="ai"
+        ${active === 'ai' ? '' : 'hidden'}
+        >${live ? '<p class="commentary-feed-status" data-ai-feed-status role="status"></p>' : ''}<div
+          class="activity-feed"
+          data-commentary-feed="${escapeHTML(game.id)}"
+          data-commentary-limit="${limit}"
+          >${commentaryRows(game, limit)}</div
+        ></div
       ></div
     ></section
   >`;
+}
+
+export function syncReportsDock(root) {
+  dockObserver?.disconnect();
+  dockObserver = null;
+  const ownerDocument = root.ownerDocument || root;
+  const panel = root.querySelector('[data-reports-panel].is-pinned');
+  const column = panel?.parentElement;
+  const theatre = column?.querySelector('.theatre');
+  const compactColumn = panel?.dataset.reportsCollapsed === 'false' && theatre ? column : null;
+  for (const previous of ownerDocument.querySelectorAll('.reports-map-compact')) {
+    if (previous === compactColumn) continue;
+    previous.classList.remove('reports-map-compact');
+    previous.style.removeProperty('--reports-map-width');
+    previous.style.removeProperty('--reports-map-font-size');
+  }
+  compactColumn?.classList.add('reports-map-compact');
+  ownerDocument.documentElement.classList.toggle('reports-docked', Boolean(panel));
+  if (!panel) {
+    ownerDocument.documentElement.style.removeProperty('--reports-dock-height');
+    return;
+  }
+  const alignDock = () => {
+    const bounds = column.getBoundingClientRect();
+    panel.style.setProperty('--reports-dock-left', Math.max(12, bounds.left) + 'px');
+    panel.style.setProperty(
+      '--reports-dock-width',
+      Math.min(bounds.width, ownerDocument.documentElement.clientWidth - 24) + 'px',
+    );
+    const dockHeight = panel.getBoundingClientRect().height;
+    ownerDocument.documentElement.style.setProperty(
+      '--reports-dock-height',
+      Math.ceil(dockHeight) + 24 + 'px',
+    );
+    if (compactColumn) {
+      const chromeHeight =
+        theatre.querySelector('.theatre-head').offsetHeight +
+        theatre.querySelector('.theatre-footer').offsetHeight +
+        2;
+      const actionsHeight = column.querySelector('.board-actions')?.offsetHeight || 0;
+      const availableHeight =
+        ownerDocument.documentElement.clientHeight -
+        dockHeight -
+        chromeHeight -
+        actionsHeight -
+        mapTopInset(column) -
+        20;
+      const mapHeight = Math.max(140, Math.min(360, availableHeight));
+      const mapWidth = Math.min(bounds.width - 2, mapHeight * 2);
+      column.style.setProperty('--reports-map-width', mapWidth + 'px');
+      // Keep labels readable as the proportional SVG becomes smaller.
+      column.style.setProperty(
+        '--reports-map-font-size',
+        Math.max(9.5, (8 * 960) / mapWidth) + 'px',
+      );
+    }
+  };
+  alignDock();
+  dockObserver = new ResizeObserver(alignDock);
+  dockObserver.observe(panel);
+  dockObserver.observe(panel.parentElement);
+}
+
+export function setReportsDock(panel, dock) {
+  const wasExpanded =
+    panel.classList.contains('is-pinned') && panel.dataset.reportsCollapsed === 'false';
+  const collapsed = Boolean(dock.pinned && dock.collapsed);
+  panel.classList.toggle('is-pinned', dock.pinned);
+  panel.dataset.reportsCollapsed = String(collapsed);
+  panel.querySelector('[data-report-content]').hidden = collapsed;
+  const pin = panel.querySelector('[data-report-control="pin"]');
+  pin.setAttribute('aria-pressed', String(dock.pinned));
+  pin.textContent = dock.pinned ? 'Unpin' : 'Pin reports';
+  panel.querySelector('[data-report-collapse-control]').hidden = !dock.pinned;
+  const collapse = panel.querySelector('[data-report-control="collapse"]');
+  const label = collapsed ? 'Expand reports' : 'Collapse reports';
+  collapse.setAttribute('aria-expanded', String(!collapsed));
+  collapse.setAttribute('aria-label', label);
+  collapse.title = label;
+  syncReportsDock(panel.ownerDocument);
+  if (dock.pinned && !collapsed && !wasExpanded) {
+    const theatre = panel.parentElement.querySelector('.theatre');
+    if (!theatre) return;
+    const bounds = theatre.getBoundingClientRect();
+    const top = mapTopInset(panel.parentElement);
+    if (bounds.top < top || bounds.bottom > panel.getBoundingClientRect().top - 8)
+      panel.ownerDocument.defaultView.scrollBy({ top: bounds.top - top, behavior: 'instant' });
+  }
 }
 
 export function selectReportTab(panel, tab) {

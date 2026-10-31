@@ -47,7 +47,7 @@ export function createMapView(context) {
           class="map-marker ${interactive ? 'interactive' : ''} ${selected === c.code ? 'selected' : ''}"
           style="--marker:${colour}"
           ${interactive ? `data-map-country="${c.code}" data-action="select-country" data-code="${c.code}" role="button" tabindex="0" aria-label="${escapeHTML(c.name)}, ${c.army} soldiers, ${nameOf(c.owner)}"` : ''}
-          >${selected === c.code && !mini ? /* HTML */ `<circle class="selection-ring" cx="${x}" cy="${y}" r="11" />` : ''}<circle
+          >${!mini ? /* HTML */ `<line class="map-label-leader" x1="${x}" y1="${y}" x2="${x}" y2="${y}" aria-hidden="true" hidden />` : ''}${selected === c.code && !mini ? /* HTML */ `<circle class="selection-ring" cx="${x}" cy="${y}" r="11" />` : ''}<circle
             cx="${x}"
             cy="${y}"
             r="${mini ? 3 : 5}"

@@ -108,7 +108,7 @@ try {
     for (let phase = 0; phase < 19; phase++) engine.roll(() => 4);
     const { page, errors } = await pageFor(game);
     await page.goto(origin + '/#game/' + game.id);
-    if (fast) await page.locator('.game-heading [data-action="fast"]').click();
+    if (fast) await page.locator('.action-panel [data-action="fast"]').click();
     await page.waitForFunction(() =>
       JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0].events.some(
         (event) => event.type === 'decision' && /Stopping.*20 phases/.test(event.text),
