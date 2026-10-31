@@ -5,5 +5,5 @@ export const firebaseConfig = {
   storageBucket: 'meridian-conquest-m112.firebasestorage.app',
   apiKey: 'AIzaSyCKvFTx46i6jgfLEaSico_QiuEnINy3oHQ',
   authDomain: 'meridian-conquest-m112.firebaseapp.com',
-  messagingSenderId: '126865630748'
+  messagingSenderId: '126865630748',
 };

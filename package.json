@@ -4,16 +4,43 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
-    "check": "node --check dist/app.js && node --check dist/motion.js && node --check dist/audio.js && node --check dist/difficulty.js && node --check dist/engine.js && node --check dist/npc-strategy.js && node --check dist/cloud.js && node --check functions/index.js && node --check functions/commentary.js && node --check dist/rooms.js && node --check dist/multiplayer.js && node --check dist/commentary.js && node --test tests/*.test.js",
+    "check": "npm run format:check && npm run lint && npm test",
     "fix-map-seams": "node scripts/fix-map-seams.mjs",
     "populations:update": "node scripts/update-populations.mjs --write-bundle",
     "catalogue:refresh": "node scripts/build-country-catalogue.mjs",
-    "populations:publish": "node scripts/update-populations.mjs --publish-admin"
+    "populations:publish": "node scripts/update-populations.mjs --publish-admin",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "node --test tests/*.test.js",
+    "browsers:install": "playwright install chromium",
+    "test:browser": "node scripts/map-browser-test.mjs && node scripts/battle-browser-test.mjs && node scripts/population-browser-test.mjs && node scripts/catalogue-browser-test.mjs",
+    "test:rules": "firebase emulators:exec --config firebase.test.json --project demo-meridian --only firestore \"node --test tests/security/*.test.js\""
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@firebase/rules-unit-testing": "6.0.0",
     "d3-geo": "^3.1.1",
+    "eslint": "10.13.0",
+    "firebase": "13.1.0",
+    "firebase-tools": "15.34.1",
+    "globals": "17.13.0",
     "libsodium-wrappers": "^0.8.2",
     "parse5": "^7.3.0",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10",
     "topojson-client": "^3.1.0"
+  },
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.6",
+    "gaxios": {
+      "uuid": "11.1.1"
+    },
+    "@google-cloud/pubsub": {
+      "@opentelemetry/core": "2.8.0"
+    }
   }
 }

@@ -1,0 +1,10 @@
+node_modules/
+.firebase/
+package-lock.json
+functions/package-lock.json
+dist/assets/
+dist/country-catalogue.js
+dist/legacy-countries.js
+dist/population-snapshot.js
+firestore.rules
+*.log

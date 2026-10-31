@@ -13,6 +13,47 @@ service cloud.firestore {
         && request.resource.data.payload is string && request.resource.data.payload.size() < 10000
         && request.resource.data.updatedAt == request.time;
     }
+
+    function validArmy(army, minimum) {
+      return army is int && army >= minimum && army <= 100000;
+    }
+    // Firestore rules cannot loop. Keep these fixed-size checks within the evaluation budget.
+    function validCountries(c, minimum, expectedCodes) {
+      let codes = [c[0].code,c[1].code,c[2].code,c[3].code,c[4].code,c[5].code,c[6].code,c[7].code,c[8].code,c[9].code];
+      let owners = [c[0].owner,c[1].owner,c[2].owner,c[3].owner,c[4].owner,c[5].owner,c[6].owner,c[7].owner,c[8].owner,c[9].owner];
+      return c is list && c.size() == 10
+        && codes == expectedCodes && codes.toSet().size() == 10 && owners.hasOnly([0,1,2,3,4,5,6,7,8,9])
+        && validArmy(c[0].army,minimum) && validArmy(c[1].army,minimum) && validArmy(c[2].army,minimum)
+        && validArmy(c[3].army,minimum) && validArmy(c[4].army,minimum) && validArmy(c[5].army,minimum)
+        && validArmy(c[6].army,minimum) && validArmy(c[7].army,minimum) && validArmy(c[8].army,minimum) && validArmy(c[9].army,minimum);
+    }
+    function validBoard(b) {
+      return b is map && b.id is string && b.id.matches('^[A-Za-z0-9_-]{1,60}$')
+        && b.name is string && b.name.size() > 0 && b.name.size() <= 60
+        && b.countryCodes is list && b.countryCodes.size() == 10
+        && b.origins is map && b.origins.keys().toSet() == b.countryCodes.toSet()
+        && validCountries(b.countries,1,b.countryCodes)
+        && b.order is list && b.order.size() == 10 && b.order.toSet() == [0,1,2,3,4,5,6,7,8,9].toSet()
+        && b.position is int && b.position >= 0 && b.position < 10
+        && b.round is int && b.round >= 1 && b.round <= 100000
+        && b.budget is int && b.budget >= 0 && b.budget <= 20
+        && b.attackUsed is bool && b.turnStarted is bool
+        && b.status in ['active','won','lost','finished']
+        && (b.winner == null || (b.winner is int && b.winner >= 0 && b.winner < 10));
+    }
+    function validEventFrame(e, eventId, type) {
+      return e is map && e.id == eventId && e.type == type
+        && e.type in ['campaign','turn','decision','attack','dice','conquest','reinforce','transfer','elimination','victory','retreat','held']
+        && e.text is string && e.text.size() <= 2000
+        && e.player is int && e.player >= 0 && e.player < 10
+        && e.round is int && e.round >= 1 && e.round <= 100000
+        && e.board is list && e.board.size() == 10
+        && !e.keys().hasAny(['commentary','commentaryVersion']);
+    }
+    function sameCampaign(a,b) {
+      return b.diff(a).affectedKeys().hasOnly(['countries','position','round','turnStarted','budget','attackUsed','battle','lastBattle','events','status','winner','updatedAt']);
+    }
+
     function validAIReport(eventId) {
       let d=request.resource.data;
       return d.keys().hasOnly(['eventId','eventType','text','status','source','model','authorUid','createdAt'])
@@ -28,13 +69,14 @@ service cloud.firestore {
         && d.eventId == eventId && d.authorUid == request.auth.uid
         && d.eventType in ['attack','dice','retreat','held','conquest','elimination','victory','decision']
         && d.text is string && d.text.size() > 0 && d.text.size() <= 500
-        && d.status == 'ready' && d.source == 'gemini' && d.model == 'gemini-3.6-flash' && d.narrationVersion == 2
+        && d.status == 'ready' && d.source == 'gemini'
+        && d.model in ['gemini-3.6-flash','gemini-3.5-flash-lite'] && d.narrationVersion == 2
         && d.createdAt == request.time;
     }
 
     match /rooms/{code} {
       function validRoom(d) {
-        return d.keys().hasOnly(['code','hostUid','memberIds','members','name','difficulty','status','createdAt','updatedAt','revision','currentSeat','controllerUid','winnerSeat','eventCount','payload'])
+        return d.keys().hasOnly(['code','hostUid','memberIds','members','name','difficulty','status','createdAt','updatedAt','revision','currentSeat','controllerUid','winnerSeat','eventCount','payload','schemaVersion','board'])
           && code.matches('^[A-HJ-NP-Z2-9]{6}$') && d.code == code
           && d.hostUid is string && d.hostUid in d.memberIds
           && d.memberIds is list && d.memberIds.size() >= 1 && d.memberIds.size() <= 10
@@ -43,12 +85,22 @@ service cloud.firestore {
           && d.name is string && d.name.size() > 0 && d.name.size() <= 50
           && d.difficulty in ['easy','medium','hard','extreme']
           && d.status in ['lobby','playing','finished','closed']
-          && d.createdAt is number && d.updatedAt is number
+          && d.createdAt is number && validRoomState(d);
+      }
+      // Membership and game updates already freeze the other lobby metadata.
+      // Rechecking it on every move wastes the limited rule evaluation budget.
+      function validRoomState(d) {
+        return d.updatedAt is number
           && d.revision is int && d.eventCount is int && d.eventCount >= 0
           && d.payload is string && d.payload.size() < 700000
           && d.currentSeat is int && d.currentSeat >= 0 && d.currentSeat < 10
           && d.winnerSeat is int && d.winnerSeat >= -1 && d.winnerSeat < 10
-          && d.controllerUid == (d.currentSeat < d.memberIds.size() ? d.memberIds[d.currentSeat] : d.hostUid);
+          && d.controllerUid == (d.currentSeat < d.memberIds.size() ? d.memberIds[d.currentSeat] : d.hostUid)
+          && (d.get('schemaVersion',1) == 1 || (d.schemaVersion == 2
+            && ((d.status in ['lobby','closed'] && d.board == null)
+              || (d.status in ['playing','finished'] && validBoard(d.board)
+                && d.board.mode == 'multiplayer' && d.board.order[d.board.position] == d.currentSeat
+                && (d.board.winner == null ? -1 : d.board.winner) == d.winnerSeat))));
       }
       function validSelf(d) {
         return d.members[request.auth.uid].keys().hasOnly(['name'])
@@ -71,23 +123,29 @@ service cloud.firestore {
       function gameUpdate() {
         let old = resource.data;
         let next = request.resource.data;
-        return next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt','currentSeat','controllerUid','winnerSeat','eventCount'])
+        return next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt','currentSeat','controllerUid','winnerSeat','eventCount','schemaVersion','board'])
           && ((old.status == 'lobby' && request.auth.uid == old.hostUid && next.status == 'playing' && next.winnerSeat == -1)
             || (old.status == 'playing' && request.auth.uid == old.controllerUid
               && ((next.status == 'playing' && next.winnerSeat == -1)
                 || (next.status == 'finished' && next.winnerSeat >= 0))))
+          && (old.get('schemaVersion',1) == 1 || (next.schemaVersion == 2
+            && (old.status == 'lobby' || (next.board != old.board && sameCampaign(old.board,next.board)
+              && next.board.round >= old.board.round && next.board.round <= old.board.round + 1
+              && (next.board.position != old.board.position || next.board.round == old.board.round)))))
           && next.eventCount > old.eventCount && next.eventCount <= old.eventCount + 30;
       }
       allow get: if signedIn();
       allow list, delete: if false;
-      allow create: if signedIn() && validRoom(request.resource.data) && validSelf(request.resource.data)
+      allow create: if signedIn() && request.resource.data.status == 'lobby'
+        && validRoom(request.resource.data) && validSelf(request.resource.data)
         && request.resource.data.hostUid == request.auth.uid
         && request.resource.data.memberIds == [request.auth.uid]
         && request.resource.data.revision == 0 && request.resource.data.eventCount == 0
         && request.resource.data.status == 'lobby' && request.resource.data.payload == ''
         && request.resource.data.currentSeat == 0 && request.resource.data.winnerSeat == -1;
-      allow update: if signedIn() && validRoom(request.resource.data)
+      allow update: if signedIn() && validRoomState(request.resource.data)
         && request.resource.data.revision == resource.data.revision + 1
+        && (resource.data.get('schemaVersion',1) == 1 || request.resource.data.get('schemaVersion',1) == 2)
         && (lobbyMembership() || gameUpdate()
           || (resource.data.status == 'lobby' && request.auth.uid == resource.data.hostUid
             && request.resource.data.status == 'closed'
@@ -113,29 +171,38 @@ service cloud.firestore {
         allow create: if signedIn() && request.auth.uid == roomBefore().controllerUid
           && roomAfter().revision == roomBefore().revision + 1
           && roomBefore().status in ['lobby','playing']
-          && request.resource.data.keys().hasOnly(['sequence','payload'])
+          && request.resource.data.keys().hasOnly(['sequence','payload','schemaVersion','type','event'])
           && request.resource.data.sequence is int
           && request.resource.data.sequence >= roomBefore().eventCount
           && request.resource.data.sequence < roomAfter().eventCount
-          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000;
+          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000
+          && (request.resource.data.get('schemaVersion',1) == 1 || (request.resource.data.schemaVersion == 2
+            && validEventFrame(request.resource.data.event,eventId,request.resource.data.type)));
         allow update, delete: if false;
       }
     }
     match /users/{uid}/games/{gameId} {
       allow read: if owner(uid);
       allow create, update: if owner(uid)
-        && request.resource.data.keys().hasOnly(['payload', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['payload','updatedAt','schemaVersion','board','name','status','round'])
         && request.resource.data.payload is string
         && request.resource.data.payload.size() < 700000
-        && request.resource.data.updatedAt is number;
+        && request.resource.data.updatedAt is number
+        && (request.resource.data.get('schemaVersion',1) == 1 || (request.resource.data.schemaVersion == 2
+          && validBoard(request.resource.data.board) && request.resource.data.board.id == gameId
+          && request.resource.data.name == request.resource.data.board.name
+          && request.resource.data.status == request.resource.data.board.status
+          && request.resource.data.round == request.resource.data.board.round));
       match /events/{eventId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && request.resource.data.keys().hasOnly(['sequence','type','context','payload'])
+          && request.resource.data.keys().hasOnly(['sequence','type','context','payload','schemaVersion','event','facts'])
           && request.resource.data.sequence is int && request.resource.data.sequence >= 0
           && request.resource.data.type is string
           && request.resource.data.context is string && request.resource.data.context.size() < 60000
-          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000;
+          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000
+          && (request.resource.data.get('schemaVersion',1) == 1 || (request.resource.data.schemaVersion == 2
+            && validEventFrame(request.resource.data.event,eventId,request.resource.data.type)));
         allow update, delete: if false;
       }
       match /aiReports/{eventId} {

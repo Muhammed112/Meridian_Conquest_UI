@@ -1,5 +1,45 @@
-{"indexes": [], "fieldOverrides": [
-  {"collectionGroup":"games","fieldPath":"payload","indexes":[]},
-  {"collectionGroup":"events","fieldPath":"payload","indexes":[]},
-  {"collectionGroup":"events","fieldPath":"context","indexes":[]}
-]}
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "games",
+      "fieldPath": "payload",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "payload",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "context",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "games",
+      "fieldPath": "board",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rooms",
+      "fieldPath": "payload",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rooms",
+      "fieldPath": "board",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "event",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "facts",
+      "indexes": []
+    }
+  ]
+}

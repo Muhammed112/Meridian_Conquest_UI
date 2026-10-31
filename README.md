@@ -4,11 +4,11 @@ A responsive, interactive frontend based on the supplied Figma design. The sourc
 
 ## Run locally
 
-Serve the `dist` folder using any static web server, for example `python3 -m http.server 8080 --directory dist`, then open http://localhost:8080.
+Use Node.js 24 LTS (also specified in `.nvmrc`). Run `npm ci`, then `npm run dev` and open http://localhost:8081. No build step is needed. Gameplay and saves work without an administrator CLI login.
 
-For Gemini commentary on localhost, sign in with `firebase login` and run `npm run dev`. Open http://localhost:8081. This server binds only to your computer and configures a private App Check development token outside `dist`, under the ignored `.firebase/` directory. It never prints or deploys the token. Plain static servers support gameplay and saves; use the development server for local AI requests.
+For Gemini commentary on localhost, sign in with `npx firebase login` and restart `npm run dev`. This server binds only to your computer and configures a private App Check development token outside `dist`, under the ignored `.firebase/` directory. It never prints or deploys the token. You can also serve `dist` with any static server, such as `python3 -m http.server 8080 --directory dist`; local AI requires the development server's App Check setup.
 
-Run `npm ci` once, then `npm run check` for JavaScript syntax checks and regression tests. Population updater dependencies run only in development and GitHub Actions; the browser remains buildless.
+Run `npm run check` for formatting, linting (including syntax checks) and unit tests. Run `npm run browsers:install` once, then `npm run test:browser` for offline gameplay checks. Security-rule tests use Java 21 and `npm run test:rules`; they target only the isolated `demo-meridian` emulator on port 8180. Development dependencies are never bundled into the browser. See [contributor notes](CONTRIBUTING.md) for module boundaries and validation details.
 
 ## Included
 
@@ -44,17 +44,21 @@ Run `npm run dev` and open http://localhost:8081 for automatic local updates. Th
 
 Updates affect new games and the unsaved setup preview. Existing campaigns and rooms retain their saved populations, armies and conquest rewards. No player campaign is rewritten by the updater. A plain static server uses the bundled snapshot or public Firestore reference instead; use the development server for local source checks. Checks pause when your local server is off. Firebase stays on Spark; no Cloud Function or billing upgrade is used.
 
-An optional **Update country populations** GitHub Action is prepared locally but is **not activated**. If committed and pushed later, it can check daily at 05:23 UTC (07:23 South Africa time) and publish `publicData/populations` for hosted clients while your computer is off. Its dedicated Firebase account has encrypted credentials in GitHub Actions Secrets and is excluded from gameplay access. The scheduled job depends on the repository's GitHub Actions allowance and may be delayed by GitHub.
+The **Update country populations** GitHub Action is included in the GitHub backup. When enabled in the repository's Actions settings, it checks daily at 05:23 UTC (07:23 South Africa time) and publishes `publicData/populations` for hosted clients while your computer is off. Its dedicated Firebase account has encrypted credentials in GitHub Actions Secrets and is excluded from gameplay access. The scheduled job depends on the repository's GitHub Actions allowance and may be delayed by GitHub.
 
 Use `npm run populations:update` to refresh the bundled offline snapshot locally, then redeploy Hosting to distribute that bundle. See [Firebase setup](docs/FIREBASE.md#population-updates) for the one-time scheduler setup and recovery steps.
 
 An operator signed in with the Firebase CLI can run `npm run populations:publish` to publish the validated reference to Firestore. This command writes only `publicData/populations` and uses a revision precondition; it does not migrate campaigns or enable billing. New snapshots, nicknames and other local UI changes require a Hosting deployment to reach the public website.
 
-Game rules and dice still execute in the browser. To enforce authoritative gameplay and prevent owners from editing their own game data, move `GameEngine` operations into backend functions. Live spectators are also a separate remaining feature. The prototype conquest allocation assigns one earned soldier to the occupied country and leaves the remaining reward in the origin; confirm the examiner's intended reward-allocation convention before finalising the backend.
+Game rules and dice execute in the browser to keep Firebase Spark free. Multiplayer validates room membership, turn ownership, revisions, structured board fields and immutable starting-country data. It cannot prove that a participant generated fair random dice: fully authoritative competitive play requires a trusted server. Read-only snapshot links are supported; live spectators remain a separate feature.
 
 ## Firebase and AI commentary
 
-Gemini 3.6 Flash adds match-aware commentary beneath new battle reports in campaigns and multiplayer. Its commentator follows the event-time standings, territorial lead changes and battle pressure, with recent wording memory to avoid repetitive stat readouts. Open the Settings gear to switch it on or off. Use **Generate commentary** above the field reports to narrate the three latest eligible saved events without current-version reports. This also refreshes older commentary while preserving the original reports. The panel shows queued, generating and error states. Reports are saved by event ID, so reloading and replaying reuse them. Turns continue if the model is slow or a free quota is exhausted.
+Gemini 3.5 Flash-Lite adds brief, match-aware reports in the AI commentary tab in campaigns and multiplayer. A compact prompt and minimal reasoning reduce generation work. Each match keeps only its most important pending event, choosing the newest when priorities match, so fast-forward skips stale AI requests. Victories, eliminations and conquests take precedence over routine exchanges; all factual reports and NPC explanations remain visible. Its commentator follows the event-time standings, territorial lead changes and battle pressure, with recent wording memory to avoid repetitive stat readouts. Turning it on in Settings immediately requests recent action in the open campaign or hosted multiplayer match; new events continue automatically. **Generate commentary** remains an optional retry for saved events. Both paths consider the three latest eligible saved events without current-version reports and select the most important. This also refreshes older commentary while preserving the original reports. The panel shows queued, generating and error states. Reports are saved by event ID, so reloading and replaying reuse them. Turns continue if the model is slow or a free quota is exhausted.
+
+Use the **Field reports** and **AI commentary** tabs to switch between the factual game log and generated reports. Commentary status and the optional Generate commentary button are in the AI tab. The selected tab stays open as turns and reports update, in campaigns and multiplayer.
+
+New commentary uses impartial, third-person play-by-play for the whole match, including bot-versus-bot battles. It names the countries and commanders involved rather than addressing the viewer or giving advice. Saved nicknames remain unchanged; legacy "You" labels use a neutral commander name only in AI context. Previously saved reports retain their original wording.
 
 The connected project uses Firebase AI Logic with the Gemini Developer API on the free Spark plan. Requests require sign-in and App Check; no personal Gemini API key goes in the browser. See [the setup guide](docs/FIREBASE.md) for configuration, local development and access boundaries.
 
