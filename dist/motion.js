@@ -10,13 +10,16 @@ const changes = (before, after) =>
     }))
     .filter((change) => change.amount !== 0);
 
+/** Project geographic markers using the same fixed bounds as the generated world map. */
 export const countryPoint = (country) => [
   ((country.lon + 180) * 960) / 360,
   ((85 - country.lat) * 480) / 143,
 ];
+/** Honor the player’s explicit setting before falling back to their system preference. */
 export const resolveReducedMotion = (choice, systemReduced) =>
   choice === 'full' ? false : choice === 'reduced' ? true : !!systemReduced;
 export const DICE_ROLL_DURATION = 1100;
+export const NPC_DECISION_DELAY = 5000;
 export const rollPending = (frame) =>
   Boolean(frame?.roll && !frame.reduced && frame.roll.age < frame.roll.rollDuration);
 // Keep calculated results in the engine, but present the preceding board until
@@ -55,12 +58,14 @@ export const dicePipPositions = {
 export function diceFaceAt(final, age, duration, index = 0) {
   return age >= duration ? final : 1 + ((Math.floor(Math.max(0, age) / 75) * 5 + index * 3) % 6);
 }
+/** Calculate a quadratic arc used by route lines and the units travelling along them. */
 export function routeGeometry(from, to) {
   const [x1, y1] = countryPoint(from),
     [x2, y2] = countryPoint(to);
   const lift = Math.min(95, 30 + Math.abs(x2 - x1) * 0.08);
   return { x1, y1, cx: (x1 + x2) / 2, cy: Math.max(18, Math.min(y1, y2) - lift), x2, y2 };
 }
+/** Serialize the shared arc geometry as an SVG path. */
 export function connectionPath(from, to) {
   const { x1, y1, cx, cy, x2, y2 } = routeGeometry(from, to);
   return `M${x1} ${y1}Q${cx} ${cy} ${x2} ${y2}`;
@@ -102,6 +107,10 @@ export function motionPose(item, time) {
   };
 }
 
+/**
+ * Recover casualties from explicit facts, legacy board differences or paired dice in that
+ * order.
+ */
 function lossesFor(event, previous) {
   const pairs = event.pairs || [];
   const loss = (field, code, comparison) => {
@@ -124,6 +133,7 @@ export class MotionDirector {
     this.reducedMotion = reducedMotion;
     this.reset();
   }
+  /** Cancel presentation timers and forget the previous route’s event cursor. */
   reset() {
     clearTimeout(this.unlockTimer);
     clearTimeout(this.announcementTimer);
@@ -137,10 +147,12 @@ export class MotionDirector {
     this.effects = [];
     this.lastAnnouncement = null;
   }
+  /** Discard active effects when reduced motion is selected without changing the saved board. */
   setReducedMotion(value) {
     this.reducedMotion = value;
     if (value) this.effects = [];
   }
+  /** Consume new event IDs once and build timed effects, preserving clocks across UI redraws. */
   frame(game, { view = 'game', replay = 0, fast = false, watch = false, localPlayer = 0 } = {}) {
     const time = this.now(),
       scale = fast ? 0.5 : 1,
@@ -153,6 +165,7 @@ export class MotionDirector {
       ? events.findIndex((event) => event.id === this.cursorId)
       : -1;
     const reset = key !== this.key || (view !== 'history' && this.cursorId && cursorIndex < 0);
+    // Initial loads establish the cursor without replaying every historical animation.
     if (reset) {
       this.reset();
       this.key = key;
@@ -218,6 +231,7 @@ export class MotionDirector {
             { changes: changes(previous, event.board).filter((c) => c.amount > 0) },
             1400 * scale,
           );
+        // Conquest follows its dice event logically, but its visual reveal waits for the dice.
         if (event.type === 'conquest') {
           const roll = latest(this.effects, 'roll');
           const delay =
@@ -290,6 +304,7 @@ export class MotionDirector {
       localPlayer,
     };
   }
+  /** Attach effects to the current DOM and reveal controls/results only when dice settle. */
   mount(root, frame, { onSettled } = {}) {
     clearTimeout(this.unlockTimer);
     clearTimeout(this.announcementTimer);
@@ -301,6 +316,7 @@ export class MotionDirector {
           '.action-panel button,.board-actions button,.room-control-panel button',
         ),
       );
+      // Remember only usable controls so finishing a roll cannot enable an illegal action.
       const enabled = buttons.filter((button) => !button.disabled);
       for (const button of enabled) button.disabled = true;
       this.unlockTimer = setTimeout(
@@ -331,6 +347,7 @@ export class MotionDirector {
       else announce();
     }
   }
+  /** Drive cosmetic SVG transforms and dice faces from one clock, replacing the old frame loop. */
   animate(root, frame = null) {
     if (this.animationFrame != null) globalThis.cancelAnimationFrame?.(this.animationFrame);
     this.animationFrame = null;
@@ -407,6 +424,7 @@ export class MotionDirector {
   }
 }
 
+/** Return ownership colours and any active capture/impact class for a country. */
 export function countryMotion(frame, country) {
   const capture = frame?.effects.findLast(
     (effect) => effect.kind === 'capture' && effect.code === country.code,
@@ -420,7 +438,11 @@ export function countryMotion(frame, country) {
   if (capture)
     return {
       className: 'captured',
-      style: `${style}--capture-from:${colours[capture.previousOwner ?? country.owner]}28;--capture-to:${colours[capture.owner ?? country.owner]}28;--capture-delay:${capture.delay - capture.age}ms;--capture-duration:${700 * capture.scale}ms;`,
+      style: /* prettier-ignore */ `${style}--capture-from:${
+        colours[capture.previousOwner ?? country.owner]
+      }28;--capture-to:${colours[capture.owner ?? country.owner]}28;--capture-delay:${
+        capture.delay - capture.age
+      }ms;--capture-duration:${700 * capture.scale}ms;`,
     };
   if (hit)
     return {
@@ -430,6 +452,7 @@ export function countryMotion(frame, country) {
   return { className: '', style };
 }
 
+/** Animate only the tray matching the current roll, including a short result reveal. */
 export function diceMotion(frame, pairs) {
   const roll = frame?.roll;
   const samePairs =
@@ -441,16 +464,24 @@ export function diceMotion(frame, pairs) {
     return { className: '', style: '' };
   return {
     className: 'dice-rolling',
-    style: `--roll-duration:${roll.rollDuration}ms;--roll-offset:${-roll.age}ms;--result-delay:${roll.rollDuration - roll.age}ms;--reveal-duration:${240 * roll.scale}ms;`,
+    style: /* prettier-ignore */ `--roll-duration:${roll.rollDuration}ms;--roll-offset:${
+      -roll.age
+    }ms;--result-delay:${roll.rollDuration - roll.age}ms;--reveal-duration:${240 * roll.scale}ms;`,
   };
 }
 
+/** Render a temporary troop delta on the SVG without changing the country's actual army. */
 function numberLabel(country, amount, delay, scale, offset = 0) {
   if (!country || !amount) return '';
   const [x, y] = countryPoint(country);
-  return `<text class="map-delta ${amount > 0 ? 'positive' : 'negative'}" x="${x}" y="${y - 16 - offset}" style="--event-delay:${delay}ms;--float-duration:${1000 * scale}ms">${amount > 0 ? '+' : '−'}${Math.abs(amount)}</text>`;
+  return /* prettier-ignore */ `<text class="map-delta ${amount > 0 ? 'positive' : 'negative'}" x="${x}" y="${
+    y - 16 - offset
+  }" style="--event-delay:${delay}ms;--float-duration:${1000 * scale}ms">${amount > 0 ? '+' : '−'}${
+    Math.abs(amount)
+  }</text>`;
 }
 
+/** Show casualties after their roll; a newer roll for this country replaces the older marker. */
 export function casualtyMarkers(frame, country, { roster = false } = {}) {
   if (!frame || frame.reduced) return '';
   const rolls = frame.effects.filter((effect) => effect.kind === 'roll');
@@ -469,49 +500,131 @@ export function casualtyMarkers(frame, country, { roster = false } = {}) {
       const start = roll.startedAt + roll.rollDuration,
         duration = Math.max(1100, 1700 * roll.scale);
       const until = next ? `data-motion-until="${next.startedAt + next.rollDuration}"` : '';
-      const timing = `data-motion-kind="label" data-motion-start="${start}" data-motion-duration="${duration}" ${until} data-country="${country.code}" data-loss="${loss}"`;
+      const timing = /* prettier-ignore */ `data-motion-kind="label" data-motion-start="${
+        start
+      }" data-motion-duration="${duration}" ${until} data-country="${country.code}" data-loss="${loss}"`;
       if (roster)
         return `<span class="country-loss" ${timing} data-motion-html aria-hidden="true">−${loss}</span>`;
       const [x, y] = countryPoint(country),
         dx = country.code === 'GB' ? -32 : country.lon > 145 ? -30 : 28,
         width = 34 + String(loss).length * 16;
-      return `<g class="casualty-marker" ${timing} data-motion-x="${x + dx}" data-motion-y="${y - 25}" transform="translate(${x + dx} ${y - 25})"><rect x="${-width / 2}" y="-15" width="${width}" height="30" rx="10"/><text text-anchor="middle" dominant-baseline="middle" y="1">−${loss}</text></g>`;
+      return /* prettier-ignore */ `<g class="casualty-marker" ${timing} data-motion-x="${
+        x + dx
+      }" data-motion-y="${y - 25}" transform="translate(${x + dx} ${y - 25})"><rect x="${
+        -width / 2
+      }" y="-15" width="${
+        width
+      }" height="30" rx="10"/><text text-anchor="middle" dominant-baseline="middle" y="1">−${
+        loss
+      }</text></g>`;
     })
     .join('');
 }
 
+/** Describe motion in data attributes so rerenders can resume the same event clock. */
 function flightAttributes(effect, from, to, delay, duration, rotate = false) {
   const geometry = routeGeometry(from, to);
-  return `data-motion-kind="flight" data-motion-start="${effect.startedAt + delay}" data-motion-duration="${duration}" ${rotate ? 'data-motion-rotate' : ''} ${Object.entries(
-    geometry,
-  )
-    .map(([key, value]) => `data-motion-${key}="${value}"`)
-    .join(' ')} transform="translate(${geometry.x1} ${geometry.y1})"`;
+  return /* prettier-ignore */ `data-motion-kind="flight" data-motion-start="${
+    effect.startedAt + delay
+  }" data-motion-duration="${duration}" ${rotate ? 'data-motion-rotate' : ''} ${
+    Object.entries(geometry)
+      .map(([key, value]) => `data-motion-${key}="${value}"`)
+      .join(' ')
+  } transform="translate(${geometry.x1} ${geometry.y1})"`;
 }
 
+/** Draw a cosmetic projectile using the recorded route and timing. */
 function missileMovement(effect, from, to) {
   const duration = effect.kind === 'roll' ? Math.max(350, 550 * effect.scale) : 1000 * effect.scale;
   const delay = effect.kind === 'roll' ? 0 : 180 * effect.scale;
-  return `<g class="missile-flight" data-from="${from.code}" data-to="${to.code}" ${flightAttributes(effect, from, to, delay, duration, true)}><path class="missile-trail" d="M-18 0H-65"/><path class="missile-flame" d="M-13-4L-31 0L-13 4Z"/><path class="missile-fins" d="M-9-3L-16-10L-13 0L-16 10L-9 3Z"/><path class="missile-body" d="M-12-4H3L16 0L3 4H-12Z"/><path class="missile-band" d="M2-4V4"/></g>`;
+  return (
+    `<g class="missile-flight" data-from="` +
+    `${from.code}` +
+    `" data-to="` +
+    `${to.code}` +
+    `" ` +
+    `${flightAttributes(effect, from, to, delay, duration, true)}` +
+    `><path class="missile-trail" d="M-18 0H-65"/>` +
+    `<path class="missile-flame" d="M-13-4L-31 0L-13 4Z"/>` +
+    `<path class="missile-fins" d="M-9-3L-16-10L-13 0L-16 10L-9 3Z"/>` +
+    `<path class="missile-body" d="M-12-4H3L16 0L3 4H-12Z"/>` +
+    `<path class="missile-band" d="M2-4V4"/></g>`
+  );
 }
 
+const AIR_ATTACK_DISTANCE_KM = 2500;
+
+/** Approximate transport range from country markers; this never changes which attacks are legal. */
+function isDistantRoute(from, to) {
+  const radians = Math.PI / 180;
+  const latitudeDifference = (to.lat - from.lat) * radians;
+  const longitudeDifference = (to.lon - from.lon) * radians;
+  // Great-circle distance also keeps nearby Pacific islands close across the date line.
+  const haversine =
+    Math.sin(latitudeDifference / 2) ** 2 +
+    Math.cos(from.lat * radians) *
+      Math.cos(to.lat * radians) *
+      Math.sin(longitudeDifference / 2) ** 2;
+  const distanceKm = 2 * 6371 * Math.asin(Math.sqrt(Math.min(1, haversine)));
+  return distanceKm >= AIR_ATTACK_DISTANCE_KM;
+}
+
+/** Draw a bounded number of unit symbols while displaying the full recorded troop count. */
 function troopMovement(effect, from, to) {
   const { age, scale, amount } = effect;
   if (!Number.isInteger(amount) || amount < 1) return '';
   const attack = effect.kind === 'attack',
     path = connectionPath(from, to);
+  const airAttack = attack && isDistantRoute(from, to);
   const colour = colours[effect.owner ?? from.owner] || colours[0];
   const width = 58 + String(amount).length * 12;
-  const soldier = `<circle class="unit-head" cx="0" cy="-6" r="3.1"/><path class="unit-helmet" d="M-4-6a4 4 0 0 1 8 0M-5-5H5"/><path class="unit-body" d="M0-2v7M-5 1l5-2 5 3M-3 4h6"/><path class="unit-step unit-step-left" d="M-1 5l-3 6"/><path class="unit-step unit-step-right" d="M1 5l4 5"/>`;
+  const { x1, y1, x2, y2 } = routeGeometry(from, to);
+  // Turn just the aircraft toward its destination so the troop count stays upright.
+  const heading = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  const symbol = airAttack
+    ? /* HTML */ `<g class="unit-plane" transform="rotate(${heading})"
+        ><path
+          d="M16 0L4-3-3-14H-7L-4-3H-11L-14-8H-17L-15 0-17 8H-14L-11 3H-4L-7 14H-3L4 3Z"
+        /></g
+      >`
+    : `<circle class="unit-head" cx="0" cy="-6" r="3.1"/>` +
+      `<path class="unit-helmet" d="M-4-6a4 4 0 0 1 8 0M-5-5H5"/>` +
+      `<path class="unit-body" d="M0-2v7M-5 1l5-2 5 3M-3 4h6"/>` +
+      `<path class="unit-step unit-step-left" d="M-1 5l-3 6"/>` +
+      `<path class="unit-step unit-step-right" d="M1 5l4 5"/>`;
   const followers = Array.from(
     { length: Math.min(3, amount - 1) },
     (_, i) =>
-      `<g class="travelling-unit troop-scout" ${flightAttributes(effect, from, to, (i + 1) * 100 * scale, 2000 * scale)}><g class="unit-symbol"><circle class="unit-disc" r="17"/>${soldier}</g></g>`,
+      /* prettier-ignore */ `<g class="travelling-unit troop-scout" ${
+        flightAttributes(
+          effect,
+          from,
+          to,
+          (i + 1) * 100 * scale,
+          2000 * scale,
+        )
+      }><g class="unit-symbol"><circle class="unit-disc" r="17"/>${symbol}</g></g>`,
   ).join('');
-  const packet = `<g class="travelling-unit troop-packet" ${flightAttributes(effect, from, to, 0, 2000 * scale)}><g class="unit-count-body"><rect class="unit-count-back" x="${-width / 2}" y="-20" width="${width}" height="40" rx="19"/><g class="unit-count-icon" transform="translate(${-width / 2 + 19} 0)">${soldier}</g><text class="troop-count" x="${-width / 2 + 38}" y="7">${amount}</text></g></g>`;
-  return `<g class="troop-movement ${attack ? 'attack' : 'transfer'}" data-troop-count="${amount}" data-from="${from.code}" data-to="${to.code}" style="--unit-colour:${colour};--march-duration:${300 * scale}ms;--march-delay:${-age}ms"><path class="troop-route" d="${path}" style="--event-delay:${-age}ms;--flight-duration:${2400 * scale}ms"/>${followers}${packet}</g>`;
+  const packet = /* prettier-ignore */ `<g class="travelling-unit troop-packet" ${
+    flightAttributes(effect, from, to, 0, 2000 * scale)
+  }><g class="unit-count-body"><rect class="unit-count-back" x="${-width / 2}" y="-20" width="${
+    width
+  }" height="40" rx="19"/><g class="unit-count-icon" transform="translate(${-width / 2 + 19} 0)">${
+    symbol
+  }</g><text class="troop-count" x="${-width / 2 + 38}" y="7">${amount}</text></g></g>`;
+  return /* prettier-ignore */ `<g class="troop-movement ${
+    attack ? 'attack' : 'transfer'
+  }" data-troop-count="${amount}" data-from="${from.code}" data-to="${
+    to.code
+  }" data-unit-type="${airAttack ? 'plane' : 'soldier'}"
+  style="--unit-colour:${colour};--march-duration:${300 * scale}ms;--march-delay:${
+    -age
+  }ms"><path class="troop-route" d="${path}" style="--event-delay:${-age}ms;--flight-duration:${
+    2400 * scale
+  }ms"/>${followers}${packet}</g>`;
 }
 
+/** Render effects against country codes, skipping geometry absent from the current board. */
 export function mapEffects(frame, countries) {
   if (!frame || frame.reduced) return '';
   const country = (code) => countries.find((c) => c.code === code);
@@ -532,7 +645,9 @@ export function mapEffects(frame, countries) {
               if (!c || !loss) return '';
               const [x, y] = countryPoint(c),
                 delay = effect.rollDuration - age;
-              return `<circle class="battle-impact-ring" cx="${x}" cy="${y}" r="8" style="--event-delay:${delay}ms;--impact-duration:${460 * scale}ms"/>`;
+              return /* prettier-ignore */ `<circle class="battle-impact-ring" cx="${x}" cy="${
+                y
+              }" r="8" style="--event-delay:${delay}ms;--impact-duration:${460 * scale}ms"/>`;
             })
             .join('')
         );
@@ -542,9 +657,15 @@ export function mapEffects(frame, countries) {
         if (!from || !to) return '';
         const labels =
           effect.kind === 'transfer'
-            ? `<g class="transfer-deltas" style="--movement-colour:${colours[effect.owner ?? from.owner]}">${numberLabel(from, -effect.amount, -age, scale)}${numberLabel(to, effect.amount, 1850 * scale - age, scale)}</g>`
+            ? /* prettier-ignore */ `<g class="transfer-deltas" style="--movement-colour:${
+              colours[effect.owner ?? from.owner]
+            }">${numberLabel(from, -effect.amount, -age, scale)}${
+              numberLabel(to, effect.amount, 1850 * scale - age, scale)
+            }</g>`
             : '';
-        return `${troopMovement(effect, from, to)}${effect.kind === 'attack' ? missileMovement(effect, from, to) : ''}${labels}`;
+        return /* prettier-ignore */ `${troopMovement(effect, from, to)}${
+          effect.kind === 'attack' ? missileMovement(effect, from, to) : ''
+        }${labels}`;
       }
       if (effect.kind === 'reinforce')
         return effect.changes
@@ -555,14 +676,25 @@ export function mapEffects(frame, countries) {
         if (!c) return '';
         const [x, y] = countryPoint(c),
           delay = effect.delay - age;
-        return `<circle class="capture-ring" cx="${x}" cy="${y}" r="8" style="--event-delay:${delay}ms;--capture-duration:${1000 * scale}ms"/>${effect.changes.map((change) => numberLabel(country(change.code), change.amount, delay + 250 * scale, scale, 14)).join('')}`;
+        return /* prettier-ignore */ `<circle class="capture-ring" cx="${x}" cy="${y}" r="8" style="--event-delay:${
+          delay
+        }ms;--capture-duration:${1000 * scale}ms"/>${
+          effect.changes
+            .map((change) =>
+              numberLabel(country(change.code), change.amount, delay + 250 * scale, scale, 14),
+            )
+            .join('')
+        }`;
       }
       return '';
     })
     .join('');
-  return `<g class="map-effects" aria-hidden="true">${markup}${countries.map((c) => casualtyMarkers(frame, c)).join('')}</g>`;
+  return /* prettier-ignore */ `<g class="map-effects" aria-hidden="true">${markup}${
+    countries.map((c) => casualtyMarkers(frame, c)).join('')
+  }</g>`;
 }
 
+/** Render escaped commander banners and deterministic victory confetti. */
 export function mapOverlay(frame) {
   if (!frame || frame.reduced) return '';
   const turn = frame.turn,
@@ -571,18 +703,41 @@ export function mapOverlay(frame) {
   const name = (player) => escapeHTML(frame.playerNames?.[player] || commanders[player]);
   const turnBanner =
     turn && !victory
-      ? `<div class="turn-banner ${turn.player === local ? 'human-turn' : ''}" style="--banner-duration:${turn.duration}ms;--event-delay:${-turn.age}ms" aria-hidden="true"><span class="turn-banner-dot" style="background:${colours[turn.player]}"></span>${turn.player === local ? 'Your turn' : `${name(turn.player)} takes command`}<span class="turn-round">ROUND ${turn.round}</span></div>`
+      ? /* prettier-ignore */ `<div class="turn-banner ${
+        turn.player === local ? 'human-turn' : ''
+      }" style="--banner-duration:${turn.duration}ms;--event-delay:${
+        -turn.age
+      }ms" aria-hidden="true"><span class="turn-banner-dot" style="background:${
+        colours[turn.player]
+      }"></span>${
+        turn.player === local ? 'Your turn' : `${name(turn.player)} takes command`
+      }<span class="turn-round">ROUND ${turn.round}</span></div>`
       : '';
   if (!victory) return turnBanner;
   const delay = victory.delay - victory.age;
   const confetti = Array.from(
     { length: 30 },
     (_, i) =>
-      `<i style="left:${5 + ((i * 37) % 90)}%;--drift:${((i * 43) % 150) - 75}px;--twist:${(i % 2 ? 1 : -1) * (180 + i * 29)}deg;--confetti-delay:${delay + (i % 6) * 35 * victory.scale}ms;--confetti-duration:${2100 * victory.scale}ms;background:${[colours[victory.player], '#D4AF37', '#E9CD76'][i % 3]}"></i>`,
+      /* prettier-ignore */ `<i style="left:${5 + ((i * 37) % 90)}%;--drift:${
+        ((i * 43) % 150) - 75
+      }px;--twist:${(i % 2 ? 1 : -1) * (180 + i * 29)}deg;--confetti-delay:${
+        delay + (i % 6) * 35 * victory.scale
+      }ms;--confetti-duration:${2100 * victory.scale}ms;background:${
+        [colours[victory.player], '#D4AF37', '#E9CD76'][i % 3]
+      }"></i>`,
   ).join('');
-  return `<div class="victory-overlay" style="--victory-delay:${delay}ms;--victory-duration:${2800 * victory.scale}ms" aria-hidden="true"><div class="victory-halo"></div><div class="confetti-field">${confetti}</div><div class="victory-banner"><span>Meridian Conquest</span><strong>${victory.player === local ? 'The world is yours.' : `${name(victory.player)} prevails.`}</strong><span>10 countries · 1 commander</span></div></div>`;
+  return /* prettier-ignore */ `<div class="victory-overlay" style="--victory-delay:${
+    delay
+  }ms;--victory-duration:${
+    2800 * victory.scale
+  }ms" aria-hidden="true"><div class="victory-halo"></div><div class="confetti-field">${
+    confetti
+  }</div><div class="victory-banner"><span>Meridian Conquest</span><strong>${
+    victory.player === local ? 'The world is yours.' : `${name(victory.player)} prevails.`
+  }</strong><span>10 countries · 1 commander</span></div></div>`;
 }
 
+/** Expose the current turn entrance timing as a class and CSS properties. */
 export function turnMotion(frame) {
   const turn = frame?.turn;
   return turn && !frame.reduced
@@ -593,6 +748,7 @@ export function turnMotion(frame) {
     : { className: '', style: '' };
 }
 
+/** Delay the cosmetic victory zoom until its preceding capture reveal. */
 export function victoryMotion(frame) {
   const victory = frame?.victory;
   return victory && !frame.reduced

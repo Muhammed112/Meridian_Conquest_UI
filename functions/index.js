@@ -10,45 +10,58 @@ import {
   cleanCommentary,
 } from './commentary.js';
 initializeApp();
+// Optional paid-backend alternative; the Spark browser app does not deploy this trigger.
+const LEASE_DURATION_MS = 120_000;
+const RETRY_WINDOW_MS = 10 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 45_000;
 const db = getFirestore(),
-  key = defineSecret('GEMINI_API_KEY');
-const model = defineString('GEMINI_MODEL', {
+  geminiApiKey = defineSecret('GEMINI_API_KEY');
+const geminiModel = defineString('GEMINI_MODEL', {
   description: 'Gemini model enabled for your project; for example gemini-3.8-flash',
 });
 export const narrateBattle = onDocumentCreated(
   {
     document: 'users/{uid}/games/{gameId}/events/{eventId}',
     region: 'europe-west1',
-    secrets: [key],
+    secrets: [geminiApiKey],
     retry: true,
     maxInstances: 2,
     concurrency: 4,
     timeoutSeconds: 90,
   },
-  async (event) => {
-    const data = event.data?.data();
-    if (!data || !isNarratedEventType(data.type)) return;
-    const ref = event.data.ref.parent.parent.collection('commentary').doc(event.params.eventId);
-    const lease = randomUUID(),
+  async function narrateSavedEvent(event) {
+    // Trigger delivery is not proof of a valid game move; this worker only narrates stored facts.
+    const eventData = event.data?.data();
+    if (!eventData || !isNarratedEventType(eventData.type)) return;
+    const commentaryRef = event.data.ref.parent.parent
+      .collection('commentary')
+      .doc(event.params.eventId);
+    const leaseId = randomUUID(),
       now = Date.now();
+    // Firestore triggers can be delivered more than once. Only one worker holds the lease.
     const claimed = await db.runTransaction(async (tx) => {
-      const old = (await tx.get(ref)).data();
-      if (old?.status === 'ready' || old?.status === 'fallback') return false;
-      if (old?.leaseUntil > now) throw new Error('Commentary is already being processed');
-      tx.set(ref, { status: 'pending', lease, leaseUntil: now + 120000 });
+      const previousReport = (await tx.get(commentaryRef)).data();
+      if (previousReport?.status === 'ready' || previousReport?.status === 'fallback') return false;
+      if (previousReport?.leaseUntil > now)
+        throw new Error('Commentary is already being processed');
+      tx.set(commentaryRef, {
+        status: 'pending',
+        lease: leaseId,
+        leaseUntil: now + LEASE_DURATION_MS,
+      });
       return true;
     });
     if (!claimed) return;
     try {
-      const context = parseCommentaryContext(data.context);
+      const context = parseCommentaryContext(eventData.context);
       const response = await fetch(
         'https://generativelanguage.googleapis.com/v1beta/models/' +
-          encodeURIComponent(model.value()) +
+          encodeURIComponent(geminiModel.value()) +
           ':generateContent',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.value() },
-          signal: AbortSignal.timeout(45000),
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey.value() },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: COMMENTARY_INSTRUCTIONS }] },
             contents: [{ role: 'user', parts: [{ text: JSON.stringify(context) }] }],
@@ -61,6 +74,7 @@ export const narrateBattle = onDocumentCreated(
         error.retryable = response.status === 429 || response.status >= 500;
         throw error;
       }
+      // Thinking parts are internal model output and must never become visible commentary.
       const result = await response.json();
       const text = cleanCommentary(
         result.candidates?.[0]?.content?.parts
@@ -68,24 +82,26 @@ export const narrateBattle = onDocumentCreated(
           .map((p) => p.text || '')
           .join(''),
       );
-      await finish({ status: 'ready', text, model: model.value() });
+      await finishReport({ status: 'ready', text, model: geminiModel.value() });
     } catch (error) {
+      // Retry transient failures for a bounded period, then leave the factual report available.
       const age = Date.now() - Date.parse(event.time);
-      if (error.retryable !== false && age < 10 * 60 * 1000) {
-        await finish({ status: 'retrying', leaseUntil: 0 });
+      if (error.retryable !== false && age < RETRY_WINDOW_MS) {
+        await finishReport({ status: 'retrying', leaseUntil: 0 });
         throw new Error('Commentary will retry', { cause: error });
       }
-      await finish({
+      await finishReport({
         status: 'fallback',
         text: '',
         reason: 'Commentary unavailable; factual report retained.',
       });
     }
-    async function finish(patch) {
+    // A delayed worker must not overwrite the report after another worker claims its lease.
+    async function finishReport(patch) {
       await db.runTransaction(async (tx) => {
-        const current = (await tx.get(ref)).data();
-        if (current?.lease === lease)
-          tx.update(ref, { ...patch, updatedAt: FieldValue.serverTimestamp() });
+        const currentReport = (await tx.get(commentaryRef)).data();
+        if (currentReport?.lease === leaseId)
+          tx.update(commentaryRef, { ...patch, updatedAt: FieldValue.serverTimestamp() });
       });
     }
   },

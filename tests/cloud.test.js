@@ -1,92 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { connectCloud } from '../dist/cloud.js';
+import { createCloudFixture as fixture } from './helpers/cloud.js';
+import { commentaryFacts } from '../dist/commentary-validation.js';
 import { GameEngine } from '../dist/engine.js';
 
-async function fixture({
-  persistenceError = null,
-  read = async () => ({ docs: [] }),
-  loadTimeout = 30000,
-  updateProfile = async (account, changes) => Object.assign(account, changes),
-} = {}) {
-  let session,
-    fail = false;
-  const writes = [],
-    subscriptions = [],
-    errors = [],
-    sessions = [],
-    loadStates = [],
-    profiles = [];
-  const sessionPersistence = { type: 'SESSION' },
-    authInstance = {};
-  const ref = (...segments) => {
-    const path = segments
-      .filter((s) => s !== db)
-      .map((s) => s.path || s)
-      .join('/');
-    return { path };
-  };
-  const db = {};
-  const sdk = {
-    initializeApp: () => ({}),
-    getAuth: () => authInstance,
-    getFirestore: () => db,
-    browserSessionPersistence: sessionPersistence,
-    async setPersistence(auth, persistence) {
-      assert.equal(auth, authInstance);
-      assert.equal(persistence, sessionPersistence);
-      assert.equal(session, undefined, 'Account restoration must wait for session persistence');
-      if (persistenceError) throw persistenceError;
-    },
-    onAuthStateChanged: (_, callback) => {
-      session = callback;
-    },
-    updateProfile,
-    collection: ref,
-    doc: ref,
-    query: (value) => value,
-    orderBy: () => ({}),
-    getDocs: read,
-    onSnapshot: (target) => {
-      subscriptions.push(target.path);
-      return () => {};
-    },
-    writeBatch: () => {
-      const batch = [];
-      return {
-        set: (target, value) => batch.push([target.path, value]),
-        commit: async () => {
-          if (fail) throw new Error('offline');
-          writes.push(batch);
-        },
-      };
-    },
-  };
-  const service = await connectCloud({
-    config: { projectId: 'test' },
-    aiSettings: { enabled: false },
-    loadSDK: async () => sdk,
-    loadTimeout,
-    onSession: (user, games, ready) => sessions.push({ user, games, ready }),
-    onProfile: (user) => profiles.push({ uid: user.uid, displayName: user.displayName }),
-    onLoadState: (state) => loadStates.push(state),
-    onCommentary: () => {},
-    onError: (e) => errors.push(e),
-  });
-  return {
-    service,
-    writes,
-    subscriptions,
-    errors,
-    sessions,
-    loadStates,
-    profiles,
-    login: (uid) => session(uid ? { uid, displayName: 'Original nickname' } : null),
-    setFailure: (value) => {
-      fail = value;
-    },
-  };
-}
+// Include generated text deliberately so save tests prove that factual storage strips it.
 const game = () => ({
   ...GameEngine.create('Save validation fixture', 'ZA', true),
   id: 'g1',
@@ -106,6 +24,8 @@ const game = () => ({
   ],
 });
 
+// Private reads must wait until tab-only persistence is configured, preventing unintended durable
+// sign-in.
 test('account restoration uses tab-session persistence before accessing private campaigns', async () => {
   const f = await fixture();
   await f.login('owner');
@@ -113,6 +33,7 @@ test('account restoration uses tab-session persistence before accessing private 
   assert.equal(f.service.ready, true);
 });
 
+// Editing a nickname must not reload the account or touch saved progress as a side effect.
 test('nickname changes update the account without reloading or rewriting its campaign history', async () => {
   const f = await fixture();
   await f.login('owner');
@@ -124,6 +45,9 @@ test('nickname changes update the account without reloading or rewriting its cam
   assert.equal(f.sessions.length, sessions);
   assert.equal(f.service.ready, true);
 });
+
+// Invalid input and signed-out actions must be stopped before they reach the account write
+// boundary.
 test('invalid and signed-out nickname updates never reach Firebase', async () => {
   let calls = 0;
   const f = await fixture({
@@ -138,6 +62,8 @@ test('invalid and signed-out nickname updates never reach Firebase', async () =>
   assert.equal(calls, 0);
   assert.equal(f.profiles.length, 0);
 });
+
+// An offline profile write must not falsely show a nickname that Firebase has not accepted.
 test('failed nickname writes retain the old profile and do not report success', async () => {
   const f = await fixture({
     updateProfile: async () => {
@@ -149,6 +75,8 @@ test('failed nickname writes retain the old profile and do not report success', 
   assert.equal(f.service.user.displayName, 'Original nickname');
   assert.equal(f.profiles.length, 0);
 });
+
+// A delayed response from a former account must not rename the player who signed in afterward.
 test('an old-account nickname response cannot replace the next signed-in player profile', async () => {
   let release, started;
   const pending = new Promise((resolve) => {
@@ -165,6 +93,7 @@ test('an old-account nickname response cannot replace the next signed-in player 
     },
   });
   await f.login('old');
+  // Start a blocked write, switch accounts, then release its delayed completion below.
   const updating = f.service.updateNickname('Old player nickname');
   await writing;
   await f.login('new');
@@ -175,11 +104,13 @@ test('an old-account nickname response cannot replace the next signed-in player 
   assert.equal(f.profiles.length, 0);
 });
 
+// Failure to establish tab-only persistence must not silently fall back to a longer-lived session.
 test('unavailable session persistence prevents authentication startup', async () => {
   const error = new Error('Session storage unavailable');
   await assert.rejects(fixture({ persistenceError: error }), error);
 });
 
+// Signed-out browser state must never create private writes or listeners using a stale account.
 test('signed-out clients do not write or subscribe to private campaigns', async () => {
   const f = await fixture();
   await f.login(null);
@@ -187,21 +118,30 @@ test('signed-out clients do not write or subscribe to private campaigns', async 
   assert.equal(f.writes.length, 0);
   assert.equal(f.subscriptions.length, 0);
 });
+
+// Recorded gameplay must remain immutable and separate from generated text so future AI input stays
+// factual.
 test('campaign events are saved immutably and narration is excluded from model facts', async () => {
   const f = await fixture();
   await f.login('owner');
-  await f.service.save([game()]);
-  assert.equal(f.writes.length, 1);
-  const batch = f.writes[0];
+  const campaign = game();
+  await f.service.save([campaign]);
+  const batch = f.writes.flat();
   assert.equal(batch[0][0], 'users/owner/games/g1/events/e1');
   assert.equal(batch[1][0], 'users/owner/games/g1');
   assert.equal(JSON.parse(batch[0][1].payload).commentary, undefined);
   assert.equal(JSON.parse(batch[0][1].context).event.commentary, undefined);
   assert.equal(batch[0][1].sequence, 0);
-  await f.service.save([game()]);
-  assert.equal(f.writes[1].length, 1);
+  assert.equal(batch[1][1].historyHead, 'e1');
+  assert.equal(batch[1][1].saveRevision, 1);
+  const writes = f.writes.length;
+  await f.service.save([campaign]);
+  assert.equal(f.writes.length, writes, 'Unchanged boards and immutable events are not rewritten');
   assert.equal(f.subscriptions.length, 3);
 });
+
+// Failed writes must remain retryable; marking them saved early would permanently lose recorded
+// events.
 test('a failed batch can retry its events instead of treating them as already saved', async () => {
   const f = await fixture();
   await f.login('owner');
@@ -211,6 +151,8 @@ test('a failed batch can retry its events instead of treating them as already sa
   await f.service.save([game()]);
   assert.equal(f.writes[0][0][0], 'users/owner/games/g1/events/e1');
 });
+
+// Bot-versus-bot action must enter the same automatic narration path as player combat.
 test('saved bot-versus-bot battles trigger commentary automatically without a manual request', async () => {
   const f = await fixture();
   await f.login('owner');
@@ -234,7 +176,11 @@ test('saved bot-versus-bot battles trigger commentary automatically without a ma
   narrator.generate = async (tasks) => {
     generated.push(...tasks);
     return JSON.stringify({
-      reports: tasks.map(({ eventId }) => ({ eventId, text: 'The recorded battle continues.' })),
+      reports: tasks.map(({ eventId, context }) => ({
+        eventId,
+        text: 'The recorded battle continues.',
+        facts: commentaryFacts(context),
+      })),
     });
   };
   narrator.persist = async (_, text) => ({ status: 'ready', text });
@@ -250,6 +196,8 @@ test('saved bot-versus-bot battles trigger commentary automatically without a ma
   narrator.reset();
 });
 
+// Queued work must retain its original account boundary instead of using whoever is signed in at
+// execution.
 test('queued saves from an old account cannot write into a new account', async () => {
   const f = await fixture();
   await f.login('old');
@@ -262,13 +210,15 @@ test('queued saves from an old account cannot write into a new account', async (
   assert.ok(f.writes[0].every(([path]) => path.startsWith('users/new/')));
 });
 
+// Keep legacy loading covered alongside the newer revisioned store tests.
 const savedRecord = {
   ref: { path: 'users/owner/games/g1' },
   data: () => ({ payload: JSON.stringify(game()) }),
 };
 const savedHistory = { docs: [{ data: () => ({ payload: JSON.stringify(game().events[0]) }) }] };
 
-test('campaign cards load before a long history and saving stays locked until it completes', async () => {
+// A campaign list must stay usable while only the chosen campaign waits for its full history.
+test('campaign cards load without history reads and only the selected history is locked while loading', async () => {
   let release, started;
   const pending = new Promise((resolve) => {
       release = resolve;
@@ -283,19 +233,25 @@ test('campaign cards load before a long history and saving stays locked until it
       return pending;
     },
   });
-  const login = f.login('owner');
+  await f.login('owner');
+  assert.equal(f.service.ready, true);
+  assert.equal(f.service.campaignState('g1').status, 'unloaded');
+  // Hold history delivery to inspect state and attempted saves while loading remains incomplete.
+  const opening = f.service.openCampaign('g1');
   await loading;
-  assert.equal(f.service.ready, false);
+  assert.equal(f.service.campaignState('g1').status, 'loading');
   assert.equal(f.sessions.at(-1).games[0].id, 'g1');
   assert.deepEqual(f.sessions.at(-1).games[0].events, []);
   await f.service.save([game()]);
   assert.equal(f.writes.length, 0);
   release(savedHistory);
-  await login;
+  const loaded = await opening;
   assert.equal(f.service.ready, true);
-  assert.equal(f.sessions.at(-1).games[0].events[0].id, 'e1');
+  assert.equal(loaded.events[0].id, 'e1');
+  assert.equal(f.service.campaignState('g1').status, 'ready');
 });
 
+// A history outage must remain distinguishable from an empty account and must allow a safe retry.
 test('failed history loads report an error without claiming an empty account and can be retried', async () => {
   let failed = true;
   const f = await fixture({
@@ -306,23 +262,25 @@ test('failed history loads report an error without claiming an empty account and
     },
   });
   await f.login('owner');
-  assert.equal(f.service.ready, false);
-  assert.equal(f.loadStates.at(-1).status, 'error');
+  await assert.rejects(f.service.openCampaign('g1'), /Offline/);
+  assert.equal(f.service.ready, true);
+  assert.equal(f.service.campaignState('g1').status, 'error');
   assert.equal(f.sessions.at(-1).games[0].id, 'g1');
-  assert.equal(
-    f.sessions.some((s) => s.ready),
-    false,
-  );
   await f.service.save([game()]);
   assert.equal(f.writes.length, 0);
   failed = false;
-  await f.service.reload();
-  assert.equal(f.loadStates.at(-1).status, 'ready');
+  await f.service.openCampaign('g1', { retry: true });
   assert.equal(f.service.ready, true);
   await f.service.save([game()]);
-  assert.equal(f.writes[0].length, 1, 'Previously saved events must not be rewritten after retry');
+  assert.equal(
+    f.writes.flat().filter(([path]) => path.includes('/events/')).length,
+    0,
+    'Previously saved events must not be rewritten after retry',
+  );
 });
 
+// Late account reads must be discarded so another player's campaign names never appear after
+// sign-in.
 test('a late campaign response from a previous account is never displayed for the next account', async () => {
   let release;
   const pending = new Promise((resolve) => {
@@ -331,6 +289,7 @@ test('a late campaign response from a previous account is never displayed for th
   const f = await fixture({
     read: async (target) => (target.path.startsWith('users/old/') ? pending : { docs: [] }),
   });
+  // Finish the former account read only after the new account has completed restoration.
   const old = f.login('old');
   await f.login('new');
   const count = f.sessions.length;
@@ -341,22 +300,32 @@ test('a late campaign response from a previous account is never displayed for th
   assert.deepEqual(f.sessions.at(-1).games, []);
 });
 
-test('a stalled campaign read becomes a retryable error and its late response cannot replace a retry', async () => {
-  let release,
-    blocked = true;
-  const pending = new Promise((resolve) => {
-    release = resolve;
-  });
-  const f = await fixture({ loadTimeout: 5, read: async () => (blocked ? pending : { docs: [] }) });
-  await f.login('owner');
-  assert.equal(f.service.ready, false);
-  assert.equal(f.loadStates.at(-1).error.code, 'deadline-exceeded');
-  blocked = false;
-  await f.service.reload();
-  const count = f.sessions.length;
-  release({ docs: [savedRecord] });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(f.sessions.length, count);
-  assert.equal(f.service.ready, true);
-  assert.deepEqual(f.sessions.at(-1).games, []);
-});
+// A stalled request must release the loading screen, and its late completion must not undo a newer
+// retry.
+test(
+  'a stalled campaign read becomes a retryable error and its late response' +
+    ' cannot replace a retry',
+  async () => {
+    let release,
+      blocked = true;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const f = await fixture({
+      // Shorten the injected deadline to exercise recovery without a 30-second unit-test wait.
+      loadTimeout: 5,
+      read: async () => (blocked ? pending : { docs: [] }),
+    });
+    await f.login('owner');
+    assert.equal(f.service.ready, false);
+    assert.equal(f.loadStates.at(-1).error.code, 'deadline-exceeded');
+    blocked = false;
+    await f.service.reload();
+    const count = f.sessions.length;
+    release({ docs: [savedRecord] });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.sessions.length, count);
+    assert.equal(f.service.ready, true);
+    assert.deepEqual(f.sessions.at(-1).games, []);
+  },
+);

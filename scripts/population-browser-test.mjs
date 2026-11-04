@@ -1,49 +1,18 @@
 import { chromium } from './lib/browser.mjs';
 // Local fixtures only: no real campaign or Firebase account is changed.
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { startTestServer } from './lib/static-server.mjs';
 
-import path from 'node:path';
 import { GameEngine } from '../dist/engine.js';
 import { bundledPopulations } from '../dist/population-snapshot.js';
 
-const root = path.resolve('dist');
 let browser;
-const server = createServer(async (req, res) => {
-  try {
-    const pathname = new URL(req.url, 'http://localhost').pathname;
-    const file = path.resolve(
-      root,
-      '.' + decodeURIComponent(pathname === '/' ? '/index.html' : pathname),
-    );
-    if (!file.startsWith(root + path.sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    res
-      .writeHead(200, {
-        'Content-Type':
-          {
-            '.js': 'text/javascript',
-            '.html': 'text/html',
-            '.css': 'text/css',
-            '.svg': 'image/svg+xml',
-            '.mp3': 'audio/mpeg',
-            '.ogg': 'audio/ogg',
-          }[path.extname(file)] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-      })
-      .end(await readFile(file));
-  } catch {
-    res.writeHead(404).end();
-  }
-});
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const server = await startTestServer();
 try {
   browser = await chromium.launch({
     headless: true,
   });
+  // Updated data affects only a new game; outages and invalid responses must keep setup playable.
   for (const scenario of ['updated', 'offline', 'malformed']) {
     const existing = GameEngine.create('Preserved campaign', 'ZA', true),
       original = JSON.stringify(existing);
@@ -64,6 +33,7 @@ try {
     const requested = new Promise((resolve) => {
       pending = resolve;
     });
+    // Hold the response until the player has edited setup, exposing redraws that could discard input.
     let populationRequest;
     await page.route('**/publicData/populations', (route) => {
       populationRequest = route;
@@ -121,6 +91,7 @@ try {
     );
     await page.close();
   }
+  // An explicitly selected running site adds a read-only source check; ordinary runs remain mocked.
   if (process.env.POPULATION_TEST_ORIGIN) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }),
       errors = [];
@@ -142,7 +113,8 @@ try {
     );
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: running app reads its population snapshot in the browser and shows the dated source in setup',
+      'PASS: running app reads its population snapshot in the browser and shows' +
+        ' the dated source in setup',
     );
     await page.close();
   }

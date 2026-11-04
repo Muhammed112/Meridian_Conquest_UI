@@ -7,6 +7,7 @@ import {
   isNarratedEventType,
 } from '../functions/commentary.js';
 
+// Delayed generation must receive the dice-phase facts rather than a later conquest board.
 test('commentary context preserves actual dice losses and immutable board facts', () => {
   const game = GameEngine.create('Commentary fixture', 'ZA', true);
   const engine = new GameEngine(game);
@@ -32,6 +33,8 @@ test('commentary context preserves actual dice losses and immutable board facts'
   assert.equal(context.previousBoard.find((c) => c.code === defender.code).army, 3);
   assert.equal(game.events.findLast((e) => e.type === 'conquest').country, defender.code);
 });
+
+// Malformed or excessive input must be rejected before it can consume quota or reach a model.
 test('invalid, oversized and non-narrated events cannot become LLM requests', () => {
   for (const raw of [
     undefined,
@@ -51,6 +54,8 @@ test('invalid, oversized and non-narrated events cannot become LLM requests', ()
   assert.equal(isNarratedEventType('decision'), true);
 });
 
+// Validation must enforce its boundary without accidentally dropping a supported event at the
+// limit.
 test('server commentary accepts every supported event and contexts at the exact size limit', () => {
   for (const type of [
     'attack',
@@ -72,6 +77,8 @@ test('server commentary accepts every supported event and contexts at the exact 
   assert.deepEqual(parseCommentaryContext(serializedContext), context);
   assert.throws(() => parseCommentaryContext(serializedContext + ' '), /Invalid event context/);
 });
+
+// The optional server path must reject unusable output and bound the text accepted for display.
 test('empty responses fall back and commentary stays short and plain text', () => {
   assert.throws(() => cleanCommentary('  '));
   assert.throws(() => cleanCommentary(undefined));
@@ -91,15 +98,19 @@ import {
   applyCommentary,
   cleanCommentary as cleanLiveCommentary,
 } from '../dist/commentary.js';
+// Minimal facts isolate queue policy from full-board context construction covered later.
 const task = (id, type = 'dice') => ({
   key: 'g/' + id,
   eventId: id,
   context: { event: { id, type, text: 'Recorded result' } },
 });
+
+// Echo requested IDs to test response matching without a live model or quota usage.
 const response = (tasks) =>
   JSON.stringify({
     reports: tasks.map((t) => ({ eventId: t.eventId, text: 'The recorded battle continues.' })),
   });
+/** Observe requests and writes with automatic timers disabled so tests choose when work drains. */
 function queue(options = {}) {
   const writes = [],
     seen = [];
@@ -118,6 +129,8 @@ function queue(options = {}) {
   });
   return { q, writes, seen };
 }
+// Repeated saves must not duplicate requests, and a batch must stay within the configured quota
+// bound.
 test('only fresh eligible events are generated, once, in bounded batches', async () => {
   const { q, writes, seen } = queue();
   const independentTasks = Array.from({ length: 8 }, (_, i) => ({
@@ -138,6 +151,8 @@ test('only fresh eligible events are generated, once, in bounded batches', async
   assert.equal(writes.length, 8);
   assert.equal(q.pending.length, 0);
 });
+
+// Existing reports must survive reload without paying for the same narration again.
 test('saved commentary is reused without making a model request', async () => {
   const generated = [],
     reported = [];
@@ -153,6 +168,8 @@ test('saved commentary is reused without making a model request', async () => {
   assert.equal(generated.length, 0);
   assert.deepEqual(reported, ['Saved report.']);
 });
+
+// A request completing after sign-out must not save content under an expired account session.
 test('signing out during a model request discards its response without saving', async () => {
   let release, started;
   const gate = new Promise((resolve) => {
@@ -171,11 +188,15 @@ test('signing out during a model request discards its response without saving', 
   q.enqueue([task('old-session')]);
   const pending = q.drain();
   await running;
+  // Reset represents sign-out while the model promise remains unresolved.
   q.reset();
   release();
   await pending;
   assert.deepEqual(writes, []);
 });
+
+// An unavailable model must degrade to factual reports without blocking the game or retrying while
+// disabled.
 test('disabled commentary makes no requests and quota errors keep factual gameplay available', async () => {
   const off = queue({ enabled: false });
   off.q.enqueue([task('off')]);
@@ -192,6 +213,9 @@ test('disabled commentary makes no requests and quota errors keep factual gamepl
   assert.deepEqual(broken.writes, []);
   assert.equal(broken.q.running, false);
 });
+
+// Fast playback must narrate current action rather than build an ever-growing queue of stale
+// reports.
 test('fast-forward keeps only the newest pending event at the same priority', () => {
   const { q } = queue();
   q.enqueue(Array.from({ length: 100 }, (_, i) => task('event' + i)));
@@ -200,6 +224,8 @@ test('fast-forward keeps only the newest pending event at the same priority', ()
   assert.equal(q.states.get('g/event98'), 'skipped');
   assert.equal(q.states.get('g/event99'), 'queued');
 });
+
+// A backlog must preserve a decisive outcome instead of replacing it with a newer low-value action.
 test('pending narration favours battle outcomes and casualties over quieter events', async () => {
   const { q, writes } = queue();
   const tiedDice = task('tie');
@@ -220,6 +246,7 @@ test('pending narration favours battle outcomes and casualties over quieter even
   assert.equal(q.states.get('g/later-elimination'), 'skipped');
 });
 
+// Priority replacement must never discard reports from another player account or independent match.
 test('priority selection stays isolated by account, campaign and multiplayer room', async () => {
   const { q, writes } = queue();
   const scopes = [
@@ -237,6 +264,7 @@ test('priority selection stays isolated by account, campaign and multiplayer roo
   assert.deepEqual(writes, ['winner', 'event1', 'event2', 'event3', 'event4', 'event5']);
 });
 
+// Many open matches must not grow the pending queue without limit.
 test('pending work stays bounded across many independent matches', () => {
   const { q } = queue();
   q.enqueue(Array.from({ length: 20 }, (_, i) => ({ ...task('event' + i), gameId: 'game' + i })));
@@ -245,6 +273,8 @@ test('pending work stays bounded across many independent matches', () => {
   assert.equal(q.states.get('g/event7'), 'skipped');
 });
 
+// A conquest arriving during slow generation must prevent an obsolete casualty report from being
+// saved.
 test('a major outcome overtakes a slower in-flight report without saving stale narration', async () => {
   const started = Promise.withResolvers(),
     release = Promise.withResolvers(),
@@ -260,6 +290,7 @@ test('a major outcome overtakes a slower in-flight report without saving stale n
   q.enqueue([task('losses')]);
   const running = q.drain();
   await started.promise;
+  // Complete old generation only after a more important outcome has already entered the queue.
   q.enqueue([task('capture', 'conquest')]);
   release.resolve();
   await running;
@@ -271,6 +302,8 @@ test('a major outcome overtakes a slower in-flight report without saving stale n
   assert.deepEqual(reported, ['capture']);
 });
 
+// An already superseded response must not delay the current outcome through an irrelevant error
+// cooldown.
 test('an unusable superseded response does not put the latest outcome on an error cooldown', async () => {
   const { q, writes } = queue({
     generate: async () => {
@@ -287,6 +320,8 @@ test('an unusable superseded response does not put the latest outcome on an erro
   assert.equal(q.errorMessage, '');
 });
 
+// Continuous equal-priority events must not keep canceling every in-flight report before any can
+// appear.
 test('equal-priority updates cannot starve an in-flight report during fast-forward', async () => {
   const started = Promise.withResolvers(),
     release = Promise.withResolvers();
@@ -309,6 +344,7 @@ test('equal-priority updates cannot starve an in-flight report during fast-forwa
   assert.deepEqual(writes, ['first', 'latest']);
 });
 
+// An event superseded during a slow cache read must not waste a later Gemini request.
 test('work superseded during cache lookup never reaches Gemini', async () => {
   const started = Promise.withResolvers(),
     release = Promise.withResolvers();
@@ -331,6 +367,8 @@ test('work superseded during cache lookup never reaches Gemini', async () => {
   assert.equal(seen[0][0].eventId, 'won');
 });
 
+// Unrequested report IDs and incomplete batches must not attach narration to the wrong factual
+// event.
 test('Gemini output is matched to requested event IDs and incomplete output is rejected', () => {
   const result = parseCommentaryBatch(
     JSON.stringify({
@@ -345,17 +383,25 @@ test('Gemini output is matched to requested event IDs and incomplete output is r
   assert.equal(result.get('a'), 'Valid report.');
   assert.throws(() => parseCommentaryBatch('{"reports":[]}', [task('a')]));
 });
-test('narration context excludes previous AI text and preserves the event board rather than the later board', () => {
-  const game = GameEngine.create('Facts', 'ZA', true),
-    event = game.events[0];
-  event.commentary = 'Generated claim';
-  const before = JSON.stringify(event.board);
-  game.countries[0].army += 20;
-  const context = commentaryContext(game, event);
-  assert.equal(context.event.commentary, undefined);
-  assert.equal(JSON.stringify(context.event.board), before);
-});
 
+// Narration input must use immutable event facts and must not recycle generated claims as evidence.
+test(
+  'narration context excludes previous AI text and preserves the event board' +
+    ' rather than the later board',
+  () => {
+    const game = GameEngine.create('Facts', 'ZA', true),
+      event = game.events[0];
+    event.commentary = 'Generated claim';
+    const before = JSON.stringify(event.board);
+    game.countries[0].army += 20;
+    const context = commentaryContext(game, event);
+    assert.equal(context.event.commentary, undefined);
+    assert.equal(JSON.stringify(context.event.board), before);
+  },
+);
+
+// Neutral broadcast names must not rewrite the nickname or wording stored in the factual game
+// history.
 test('commentary uses neutral names while preserving saved nicknames and factual log text', () => {
   const game = GameEngine.create('Broadcast names', 'ZA', true);
   const original = JSON.stringify(game);
@@ -384,6 +430,7 @@ test('commentary uses neutral names while preserving saved nicknames and factual
   assert.equal(event.text, JSON.parse(original).events.at(-1).text);
 });
 
+// Conquest must not retroactively change which bot defended the country in the narrated battle.
 test('bot battle participants retain their event-time identities after a conquest', () => {
   const game = GameEngine.create('Bot broadcast', 'ZA', true),
     engine = new GameEngine(game);
@@ -407,24 +454,90 @@ test('bot battle participants retain their event-time identities after a conques
   assert.equal(context.previousBoard.find((country) => country.code === event.country).owner, 2);
 });
 
-test('saved campaigns can request only the latest three missing eligible reports without replaying their whole history', () => {
-  const game = GameEngine.create('Saved game', 'ZA', true),
-    source = game.events[0];
-  game.events = Array.from({ length: 20 }, (_, i) => ({
-    ...source,
-    id: 'saved' + i,
-    type: 'dice',
-  }));
-  game.events.at(-1).commentary = 'Already saved.';
-  game.events.at(-1).commentaryVersion = COMMENTARY_VERSION;
-  const tasks = recentCommentaryTasks(game, { uid: 'owner' });
-  assert.deepEqual(
-    tasks.map((task) => task.eventId),
-    ['saved16', 'saved17', 'saved18'],
+// A delayed report must narrate the agreement recorded then, even if the same commanders have
+// since betrayed it. Diplomatic participants must not be mistaken for an earlier battle's sides.
+test('diplomacy commentary freezes event-time outcomes and names without leaking future pacts', () => {
+  const game = GameEngine.create('Diplomatic commentary', 'ZA', true, 'medium', 'Mo'),
+    engine = new GameEngine(game);
+  engine.event('attack', 'An earlier attack.', { from: 'ZA', to: 'BR' });
+  engine.event('decision', 'Mo and Atlas accept a pact.', {
+    diplomacy: {
+      action: 'accepted',
+      proposer: 0,
+      target: 2,
+      reason: 'A shared rival threatens both commanders.',
+      expiresRound: game.round + 3,
+    },
+    diplomacyState: {
+      alliances: [{ players: [0, 2], startedRound: game.round, expiresRound: game.round + 3 }],
+      trust: [],
+      lastOffers: [{ player: 0, round: game.round }],
+    },
+  });
+  const accepted = game.events.at(-1);
+  engine.event('decision', 'Atlas later breaks the pact.', {
+    diplomacy: { action: 'betrayed', proposer: 2, target: 0, reason: 'A decisive attack opens.' },
+    diplomacyState: { alliances: [], trust: [], lastOffers: [{ player: 0, round: game.round }] },
+  });
+  const context = commentaryContext(game, accepted),
+    original = JSON.stringify(context),
+    request = JSON.parse(commentaryRequest([{ eventId: accepted.id, context }])).events[0];
+  assert.equal(context.event.diplomacy.action, 'accepted');
+  assert.equal(context.event.diplomacy.proposerName, 'Mo');
+  assert.equal(context.event.diplomacy.targetName, 'Atlas');
+  assert.equal(context.event.diplomacy.expiresRound, game.round + 3);
+  assert.equal(context.match.battle, null, 'A pact is not an extension of a previous attack');
+  assert.equal(request.verifiedFacts.from, '');
+  assert.equal(request.verifiedFacts.to, '');
+  assert.equal(request.event.diplomacyState, undefined);
+  assert.doesNotMatch(JSON.stringify(request), /later breaks|decisive attack|betrayed/);
+  accepted.diplomacy.reason = 'Changed after queueing';
+  assert.equal(JSON.stringify(context), original, 'Queued diplomatic facts stay immutable');
+  assert.equal(
+    commentaryContext(game, game.events[0]).event.diplomacy,
+    undefined,
+    'Legacy and ordinary decisions do not gain invented agreements',
   );
-  assert.ok(tasks.every((task) => task.uid === 'owner' && task.gameId === game.id));
 });
 
+// A new quiet decision must not hide a pact or betrayal when the narrator is catching up;
+// conquest and victory still retain their existing higher priorities.
+test('diplomatic turning points outrank routine decisions without displacing conquests', () => {
+  const { q } = queue(),
+    pact = task('pact', 'decision');
+  pact.context.event.diplomacy = { action: 'accepted' };
+  q.enqueue([pact, task('later-plan', 'decision')]);
+  assert.equal(q.pending[0].eventId, 'pact');
+  q.enqueue([task('capture', 'conquest')]);
+  assert.equal(q.pending[0].eventId, 'capture');
+});
+
+// Enabling AI on an old save must request recent missing action without backfilling the entire
+// match.
+test(
+  'saved campaigns can request only the latest three missing eligible reports' +
+    ' without replaying their whole history',
+  () => {
+    const game = GameEngine.create('Saved game', 'ZA', true),
+      source = game.events[0];
+    game.events = Array.from({ length: 20 }, (_, i) => ({
+      ...source,
+      id: 'saved' + i,
+      type: 'dice',
+    }));
+    game.events.at(-1).commentary = 'Already saved.';
+    game.events.at(-1).commentaryVersion = COMMENTARY_VERSION;
+    const tasks = recentCommentaryTasks(game, { uid: 'owner' });
+    assert.deepEqual(
+      tasks.map((task) => task.eventId),
+      ['saved16', 'saved17', 'saved18'],
+    );
+    assert.ok(tasks.every((task) => task.uid === 'owner' && task.gameId === game.id));
+  },
+);
+
+// Queued reports must remain frozen in event time, even if the game progresses before Gemini
+// responds.
 test('match context uses the event snapshot, recorded battle totals and strictly earlier narration', () => {
   const game = GameEngine.create('Match story', 'ZA', true),
     engine = new GameEngine(game);
@@ -466,131 +579,150 @@ test('match context uses the event snapshot, recorded battle totals and strictly
   );
 });
 
-test('territorial ties and lead changes are explicit and a new turn does not inherit the previous battle', () => {
-  const game = GameEngine.create('Leader story', 'ZA', true),
-    engine = new GameEngine(game);
-  game.events = [];
-  game.countries.forEach((c, i) => {
-    c.owner = i < 4 ? i % 2 : i;
-    c.army = 10 + i;
-  });
-  engine.event('turn', 'Before the capture.');
-  game.countries[1].owner = 0;
-  engine.event('conquest', 'A recorded capture.', { country: game.countries[1].code });
-  const context = commentaryContext(game, game.events.at(-1));
-  assert.deepEqual(context.match.previousTerritorialLeaders.sort(), [0, 1]);
-  assert.deepEqual(context.match.territorialLeaders, [0]);
-  engine.event('attack', 'A previous attack.', { from: 'ZA', to: 'BR' });
-  engine.event('turn', 'A new commander takes over.');
-  engine.event('decision', 'Planning a new move.');
-  assert.equal(commentaryContext(game, game.events.at(-1)).match.battle, null);
-});
+// Lead changes must distinguish a tie from an outright lead and must not reuse a past turn's
+// battle.
+test(
+  'territorial ties and lead changes are explicit and a new turn does not' +
+    ' inherit the previous battle',
+  () => {
+    const game = GameEngine.create('Leader story', 'ZA', true),
+      engine = new GameEngine(game);
+    game.events = [];
+    game.countries.forEach((c, i) => {
+      c.owner = i < 4 ? i % 2 : i;
+      c.army = 10 + i;
+    });
+    engine.event('turn', 'Before the capture.');
+    game.countries[1].owner = 0;
+    engine.event('conquest', 'A recorded capture.', { country: game.countries[1].code });
+    const context = commentaryContext(game, game.events.at(-1));
+    assert.deepEqual(context.match.previousTerritorialLeaders.sort(), [0, 1]);
+    assert.deepEqual(context.match.territorialLeaders, [0]);
+    engine.event('attack', 'A previous attack.', { from: 'ZA', to: 'BR' });
+    engine.event('turn', 'A new commander takes over.');
+    engine.event('decision', 'Planning a new move.');
+    assert.equal(commentaryContext(game, game.events.at(-1)).match.battle, null);
+  },
+);
 
-test('compact requests preserve event-time losses, tied leaders and ownership without redundant snapshots', () => {
-  const game = GameEngine.create('Compact facts', 'ZA', true);
-  const engine = new GameEngine(game);
-  game.events = [];
-  game.budget = 0;
-  game.countries.forEach((country, index) => {
-    country.owner = index < 3 ? 0 : index < 6 ? 1 : index - 4;
-    country.army = 5;
-  });
-  game.countries[0].army = 6;
-  game.countries[3].army = 1;
-  engine.event('turn', 'Two commanders have three countries each.');
-  engine.startAttack(game.countries[0].code, game.countries[3].code);
-  let rollIndex = 0;
-  engine.roll(() => (++rollIndex % 2 ? 6 : 1));
-  const dice = game.events.findLast((event) => event.type === 'dice');
-  const capture = game.events.findLast((event) => event.type === 'conquest');
-  const tasks = [dice, capture].map((event) => ({
-    eventId: event.id,
-    context: commentaryContext(game, event),
-  }));
-  const original = JSON.stringify(tasks);
-  game.countries[0].army = 9999;
-  const request = commentaryRequest(tasks);
-  const [before, after] = JSON.parse(request).events;
-  assert.equal(before.event.defenderLoss, 1);
-  assert.equal(
-    before.event.exchangeBalance,
-    game.countries.find((country) => country.code === dice.to).name +
-      ' lost more soldiers in this exchange.',
-  );
-  assert.equal(before.event.dicePairCount, 1);
-  assert.equal(before.countries.find((country) => country.code === dice.to).army, 0);
-  assert.equal(before.countries.find((country) => country.code === dice.to).owner, 1);
-  assert.equal(after.countries.find((country) => country.code === capture.country).owner, 0);
-  assert.deepEqual(before.match.territorialLeaders, [0, 1]);
-  assert.deepEqual(after.match.territorialLeaders, [0]);
-  assert.equal(before.match.newOutrightLeader, null);
-  assert.deepEqual(after.match.newOutrightLeader, {
-    name: 'Commander 1',
-    countries: 4,
-    change: 'Broke a territorial tie to take the outright lead.',
-  });
-  assert.equal(after.match.standings[0].previousCountries, 3);
-  assert.equal(after.match.standings[0].countries, 4);
-  assert.equal(before.event.board, undefined);
-  assert.equal(before.event.pairs, undefined);
-  assert.equal(before.previousBoard, undefined);
-  assert.equal(before.match.previousStandings, undefined);
-  assert.equal(before.countries.length, 2);
-  assert.ok(before.countries.every((country) => country.name));
-  assert.ok(request.length < original.length);
-  assert.doesNotMatch(JSON.stringify(before), /9999|conquered/);
-  assert.equal(JSON.stringify(tasks), original, 'Compaction must not mutate queued facts');
-});
+// Smaller requests must preserve the facts needed for accurate commentary without altering queued
+// snapshots.
+test(
+  'compact requests preserve event-time losses, tied leaders and ownership' +
+    ' without redundant snapshots',
+  () => {
+    const game = GameEngine.create('Compact facts', 'ZA', true);
+    const engine = new GameEngine(game);
+    game.events = [];
+    game.budget = 0;
+    game.countries.forEach((country, index) => {
+      country.owner = index < 3 ? 0 : index < 6 ? 1 : index - 4;
+      country.army = 5;
+    });
+    game.countries[0].army = 6;
+    game.countries[3].army = 1;
+    engine.event('turn', 'Two commanders have three countries each.');
+    engine.startAttack(game.countries[0].code, game.countries[3].code);
+    let rollIndex = 0;
+    engine.roll(() => (++rollIndex % 2 ? 6 : 1));
+    const dice = game.events.findLast((event) => event.type === 'dice');
+    const capture = game.events.findLast((event) => event.type === 'conquest');
+    const tasks = [dice, capture].map((event) => ({
+      eventId: event.id,
+      context: commentaryContext(game, event),
+    }));
+    const original = JSON.stringify(tasks);
+    game.countries[0].army = 9999;
+    const request = commentaryRequest(tasks);
+    const [before, after] = JSON.parse(request).events;
+    assert.equal(before.event.defenderLoss, 1);
+    assert.equal(
+      before.event.exchangeBalance,
+      game.countries.find((country) => country.code === dice.to).name +
+        ' lost more soldiers in this exchange.',
+    );
+    assert.equal(before.event.dicePairCount, 1);
+    assert.equal(before.countries.find((country) => country.code === dice.to).army, 0);
+    assert.equal(before.countries.find((country) => country.code === dice.to).owner, 1);
+    assert.equal(after.countries.find((country) => country.code === capture.country).owner, 0);
+    assert.deepEqual(before.match.territorialLeaders, [0, 1]);
+    assert.deepEqual(after.match.territorialLeaders, [0]);
+    assert.equal(before.match.newOutrightLeader, null);
+    assert.deepEqual(after.match.newOutrightLeader, {
+      name: 'Commander 1',
+      countries: 4,
+      change: 'Broke a territorial tie to take the outright lead.',
+    });
+    assert.equal(after.match.standings[0].previousCountries, 3);
+    assert.equal(after.match.standings[0].countries, 4);
+    assert.equal(before.event.board, undefined);
+    assert.equal(before.event.pairs, undefined);
+    assert.equal(before.previousBoard, undefined);
+    assert.equal(before.match.previousStandings, undefined);
+    assert.equal(before.countries.length, 2);
+    assert.ok(before.countries.every((country) => country.name));
+    assert.ok(request.length < original.length);
+    assert.doesNotMatch(JSON.stringify(before), /9999|conquered/);
+    assert.equal(JSON.stringify(tasks), original, 'Compaction must not mutate queued facts');
+  },
+);
 
-test('queued battle reports start within six seconds and timeouts do not block new events for a minute', async () => {
-  let now = 1000;
-  const delays = [];
-  const { q } = queue({
-    now: () => now,
-    setTimer: (_callback, delay) => {
-      delays.push(delay);
-      return 1;
-    },
-  });
-  q.enqueue([task('opening')]);
-  assert.ok(delays.at(-1) <= 1000, 'The first report should start promptly');
-  q.timer = null;
-  await q.drain();
-  q.enqueue([task('dice')]);
-  assert.ok(delays.at(-1) <= 6000, 'The next batch should not wait twelve seconds');
+// Transient delays need a short recovery path, while real quota exhaustion must retain its longer
+// cooldown.
+test(
+  'queued battle reports start within six seconds and timeouts do not block' +
+    ' new events for a minute',
+  async () => {
+    let now = 1000;
+    const delays = [];
+    const { q } = queue({
+      now: () => now,
+      setTimer: (_callback, delay) => {
+        delays.push(delay);
+        return 1;
+      },
+    });
+    q.enqueue([task('opening')]);
+    assert.ok(delays.at(-1) <= 1000, 'The first report should start promptly');
+    await q.drain();
+    q.enqueue([task('dice')]);
+    assert.ok(delays.at(-1) <= 6000, 'The next batch should not wait twelve seconds');
 
-  const timeout = queue({
-    now: () => now,
-    generate: async () => {
-      throw Object.assign(new Error('Request timed out'), { name: 'AbortError' });
-    },
-  }).q;
-  timeout.enqueue([task('late')]);
-  await timeout.drain();
-  assert.equal(timeout.nextAt - now, 5000);
-  assert.match(timeout.errorMessage, /took too long/);
-  now += 100;
-  const limited = queue({
-    now: () => now,
-    generate: async () => {
-      throw new Error('429 quota exhausted');
-    },
-  }).q;
-  limited.enqueue([task('quota')]);
-  await limited.drain();
-  assert.equal(limited.nextAt - now, 60000, 'Quota failures must retain their cooldown');
-  const busy = queue({
-    now: () => now,
-    generate: async () => {
-      throw new Error('500 This model is currently experiencing high demand.');
-    },
-  }).q;
-  busy.enqueue([task('busy')]);
-  await busy.drain();
-  assert.equal(busy.nextAt - now, 5000);
-  assert.match(busy.errorMessage, /busy right now/);
-});
+    const timeout = queue({
+      now: () => now,
+      generate: async () => {
+        throw Object.assign(new Error('Request timed out'), { name: 'AbortError' });
+      },
+    }).q;
+    timeout.enqueue([task('late')]);
+    await timeout.drain();
+    assert.equal(timeout.nextAt - now, 5000);
+    assert.match(timeout.errorMessage, /took too long/);
+    now += 100;
+    const limited = queue({
+      now: () => now,
+      generate: async () => {
+        throw new Error('429 quota exhausted');
+      },
+    }).q;
+    limited.enqueue([task('quota')]);
+    await limited.drain();
+    assert.equal(limited.nextAt - now, 60000, 'Quota failures must retain their cooldown');
+    const busy = queue({
+      now: () => now,
+      generate: async () => {
+        throw new Error('500 This model is currently experiencing high demand.');
+      },
+    }).q;
+    busy.enqueue([task('busy')]);
+    await busy.drain();
+    assert.equal(busy.nextAt - now, 5000);
+    assert.match(busy.errorMessage, /busy right now/);
+  },
+);
 
+// Earlier reports may guide phrasing only within their own campaign and only before the current
+// event.
 test('wording memory stays within a campaign and never exposes a later event to an earlier report', async () => {
   const { q, seen } = queue();
   const past = task('past');
@@ -619,32 +751,40 @@ test('wording memory stays within a campaign and never exposes a later event to 
   assert.equal(q.memory.size, 0);
 });
 
-test('legacy reports can be upgraded while late legacy listeners cannot overwrite the new commentary', () => {
-  const game = GameEngine.create('Upgrade', 'ZA', true),
-    event = game.events.find((e) => e.type === 'conquest');
-  event.commentary = 'Old stat summary.';
-  assert.ok(
-    recentCommentaryTasks(game, { uid: 'owner' }).some((task) => task.eventId === event.id),
-  );
-  assert.equal(
-    applyCommentary(event, {
-      status: 'ready',
-      text: 'A new match-aware report.',
-      narrationVersion: COMMENTARY_VERSION,
-    }),
-    true,
-  );
-  assert.equal(
-    applyCommentary(event, { status: 'ready', text: 'A late old report.', narrationVersion: 0 }),
-    false,
-  );
-  assert.equal(event.commentary, 'A new match-aware report.');
-  assert.equal(
-    recentCommentaryTasks(game, { uid: 'owner' }).some((task) => task.eventId === event.id),
-    false,
-  );
-});
+// Upgraded reports must survive late legacy listener updates without making another upgrade
+// request.
+test(
+  'legacy reports can be upgraded while late legacy listeners cannot overwrite' +
+    ' the new commentary',
+  () => {
+    const game = GameEngine.create('Upgrade', 'ZA', true),
+      event = game.events.find((e) => e.type === 'conquest');
+    event.commentary = 'Old stat summary.';
+    assert.ok(
+      recentCommentaryTasks(game, { uid: 'owner' }).some((task) => task.eventId === event.id),
+    );
+    assert.equal(
+      applyCommentary(event, {
+        status: 'ready',
+        text: 'A new match-aware report.',
+        narrationVersion: COMMENTARY_VERSION,
+      }),
+      true,
+    );
+    assert.equal(
+      applyCommentary(event, { status: 'ready', text: 'A late old report.', narrationVersion: 0 }),
+      false,
+    );
+    assert.equal(event.commentary, 'A new match-aware report.');
+    assert.equal(
+      recentCommentaryTasks(game, { uid: 'owner' }).some((task) => task.eventId === event.id),
+      false,
+    );
+  },
+);
 
+// Live commentary needs room for useful context while remaining bounded plain text for storage and
+// display.
 test('live narration allows two concise sentences while retaining storage limits and plain text', () => {
   const text = 'The lead changes hands. ' + Array(38).fill('word').join(' ') + '.';
   assert.equal(cleanLiveCommentary(text), text);
@@ -653,6 +793,8 @@ test('live narration allows two concise sentences while retaining storage limits
   assert.ok(bounded.split(' ').length <= 60);
 });
 
+// Failures must explain a usable next step and explicit retries must not remain stuck as already
+// attempted.
 test('failed reports expose an actionable status and can be explicitly requested again', async () => {
   let calls = 0;
   const { q, writes } = queue({

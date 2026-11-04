@@ -1,0 +1,1006 @@
+MERIDIAN CONQUEST: DEVELOPMENT PROBLEMS AND SOLUTIONS
+Compiled: 2 November 2026
+
+RELEASE UPDATE: 2 NOVEMBER 2026
+
+The current browser application and matching Firestore rules/indexes have now
+been published to https://meridian-conquest.vercel.app. This includes the later
+tutorial scroll fix, flag images with roster abbreviations, single-field country
+search and homepage briefing entrance. Historical references below to local or
+pending work describe the status when those entries were compiled; this release
+update supersedes them. Source documentation and operator scripts remain local
+repository files, and no GitHub push was performed as part of this deployment.
+
+Release verification passed 200 unit tests, 15 emulator tests and all eight
+offline browser scripts. Live checks passed cloud saving/reloading, Gemini,
+spectators/revocation and two-player gameplay. Temporary test data was removed.
+The custom reset-email wording remains blocked by Firebase's template restriction.
+See docs/VERCEL.md for the release identifier and full verification evidence.
+
+PURPOSE AND SCOPE
+
+This document records the problems, concerns, requested improvements and reversals
+recoverable from the supplied development conversation and this repository.
+Repeated reports of the same problem are grouped together. Requested features are
+identified as requests rather than described as faults in an existing feature.
+
+Each entry explains what happened, how it was addressed, where the implementation
+can be found, and any outcome or limitation that matters. Where the original cause
+or final result was not recorded, that uncertainty is stated rather than invented.
+References are paths relative to the project root.
+
+"Implemented" means present in the current local source. It does not automatically
+mean published. The quality release was published on 1 November and checked through
+2 November. The latest commentary and move-validation refinements, subsequent
+comment/formatting work, copy-link button and audio-text cleanup remain local.
+The custom password-reset email wording is not live because Firebase rejected it.
+
+This is a historical record, not a claim that every issue was retested today.
+Creating this document does not change the application, Firebase or deployments.
+
+
+1. PROJECT SETUP, ACCOUNTS AND PLAYER IDENTITY
+===========================================
+
+1.1 No GitHub repository or accessible backup
+Problem/request: The project needed a repository, and there was confusion about
+why GitHub publishing had previously worked but was not immediately available.
+Resolution: GitHub access was established and backups were committed and pushed.
+Repository history records the initial backup and later feature backups. Before
+larger changes, the existing working version was backed up as requested.
+Outcome: Backups exist. Later local work is not automatically on GitHub; a Vercel
+CLI deployment is also separate from a Git push. The exact initial access failure
+is not established by the retained conversation.
+Evidence: Git history; docs/VERCEL.md.
+
+1.2 No Firebase project or cloud database
+Problem/request: The game needed account-based storage, and no Firebase project
+had been created yet.
+Resolution: Connected the application to meridian-conquest-m112, enabled Firebase
+Email/Password Authentication and created Cloud Firestore storage for campaigns,
+events and multiplayer rooms. Authentication had to be activated in the console.
+Outcome: The project uses Cloud Firestore, a document-based NoSQL database.
+Evidence: dist/cloud.js; dist/firebase-config.js; docs/FIREBASE.md; docs/DATABASE.md.
+
+1.3 Uncertainty about where the database could be viewed
+Problem/request: It was unclear whether the database was NoSQL and how to inspect
+the saved data.
+Resolution: Documented the Firebase project, Firestore database and collection
+structure, with console access details. Application sign-in and permission to
+view the database console are separate forms of access.
+Outcome: The database can be inspected through the Firebase/Google Cloud console
+using an appropriately permitted account.
+Evidence: docs/FIREBASE.md; docs/DATABASE.md.
+
+1.4 The initial AI backend required a billing upgrade
+Problem: Deploying the optional Firebase Functions commentary service required
+Blaze, while the decision was to keep the free Spark plan.
+Resolution: Used Firebase AI Logic with the Gemini Developer API for the active
+commentary integration. Kept the older functions implementation as an optional,
+undeployed alternative rather than enabling billing.
+Outcome: Firebase remains on Spark with billing disabled. Provider quotas remain;
+the application does not gain unlimited AI generation.
+Evidence: docs/FIREBASE.md; dist/commentary.js; functions/commentary.js.
+
+1.5 Users stayed signed in longer than desired
+Problem/request: Closing the browser should end the signed-in session.
+Resolution: Set Firebase browserSessionPersistence before authentication restores
+the account. A refresh retains the session; closing the signed-in tab/window ends
+the browser session. Failure to configure persistence does not silently select
+longer-lived persistence.
+Outcome: Logging out does not delete cloud campaigns. This is session persistence,
+not a promise that a closing browser sends an immediate server-side logout call.
+Evidence: dist/cloud.js; tests/cloud.test.js; docs/FIREBASE.md.
+
+1.6 "Game name" was initially ambiguous
+Problem/request: The request to choose a game name meant a player nickname, not
+renaming the campaign.
+Resolution: Added nickname selection at signup and editing under Settings. The
+name is validated and stored in the Authentication profile's displayName.
+Outcome: Player identity has its own setting; campaign titles remain separate.
+Evidence: dist/profile.js; dist/cloud.js; dist/controllers/settings.js.
+
+1.7 The selected nickname needed to carry into multiplayer
+Problem/request: A player should not have to enter a different name for a room.
+Resolution: New campaigns record playerNames. Creating or joining a room copies
+the same account nickname into the room member record and shared game.
+Outcome: New games and room membership use the account nickname. Existing saves
+and already joined rooms retain their recorded names instead of rewriting history.
+Evidence: dist/rooms.js; tests/rooms.test.js; scripts/nickname-browser-test.mjs.
+
+1.8 The turn label said "You's turn"
+Problem: Building a possessive turn label from a literal "You" produced incorrect
+grammar and did not distinguish the local player from another commander.
+Resolution: Resolve the viewer's seat when rendering turn labels. The local player
+sees "Your turn"; another player's turn uses that player's recorded name.
+Outcome: Multiplayer ownership and turn presentation are relative to the viewer.
+Evidence: dist/ui/battle.js; tests/views.test.js.
+
+1.9 Concern that the Firebase username had been deleted
+Problem: The displayed name appeared wrong or missing, leading to concern that
+the account's username had been removed.
+Resolution: Kept account nicknames in Auth displayName and separated profile
+updates from campaign loading. Failed profile writes retain the previous name;
+late responses from an old account cannot replace the next account's profile.
+Outcome: There is no confirmed username-deletion incident in the retained record.
+Do not describe this concern as proof that an account was deleted and restored.
+Evidence: dist/profile.js; dist/cloud.js; tests/cloud.test.js.
+
+
+2. MISSING CAMPAIGNS, LOADING AND SAVE RELIABILITY
+===============================================
+
+2.1 "Southern Meridian" appeared to have disappeared
+Problem: My campaigns showed "No campaigns in sight" even though the top bar
+showed Sign out and the correct account was being used.
+Resolution: Checked the signed-in account and saved campaign, corrected the
+loading behavior, and had the browser load the updated application with Ctrl+F5.
+Outcome: The user explicitly confirmed "Southern Meridian appears." The available
+record does not establish that its database document had ever been deleted.
+Evidence: User confirmation in the conversation; dist/cloud.js;
+tests/cloud.test.js; dist/controllers/campaigns.js.
+
+2.2 Loading failures could look like an empty account
+Problem: A failed or incomplete campaign load must not be presented as proof that
+there are no saved campaigns.
+Resolution: Added explicit loading/error/retry states and independent validation
+of campaign summaries. Late results are checked against the current account.
+Outcome: Errors remain visible and retryable instead of silently erasing the list.
+The original cause of every earlier empty-list report is not recoverable.
+Evidence: dist/campaign-store.js; tests/cloud.test.js;
+tests/campaign-store.test.js.
+
+2.3 Data from one account could arrive after switching accounts
+Problem: Asynchronous reads, queued saves or profile requests can finish after a
+sign-out and otherwise contaminate the next session's state.
+Resolution: Added account-generation guards, per-user browser recovery caches,
+subscription cleanup and checks before applying or writing asynchronous results.
+Outcome: Old-account responses and queued writes are discarded for a new account.
+Evidence: dist/cloud.js; dist/campaign-store.js; tests/cloud.test.js.
+
+2.4 Large histories made campaign loading unnecessarily expensive
+Problem: Loading all event histories at sign-in scales poorly and can delay the
+whole campaign list.
+Resolution: Load board summaries first. Fetch only the selected campaign's history
+in pages of at most 250 events.
+Outcome: Opening one campaign does not download every other campaign's history.
+Evidence: dist/campaign-store.js; docs/DATABASE.md;
+tests/campaign-store.test.js.
+
+2.5 One broken or stalled campaign could obstruct other games
+Problem: A damaged board or selected-history failure should not prevent access
+to other readable campaigns. A stalled history must release its loading screen.
+Resolution: Isolated each record's load state, added a 30-second read deadline and
+provided a campaign-specific retry. Damaged records are reported, not overwritten.
+Outcome: Other valid campaigns remain independently accessible. An account-wide
+list/network failure still needs a successful retry before new cloud gameplay.
+Evidence: dist/campaign-store.js; tests/cloud.test.js;
+tests/campaign-store.test.js.
+
+2.6 Partial cloud lists could overwrite complete browser recovery copies
+Problem: An unopened campaign may have only a summary in memory; persisting that
+partial list could lose a previously complete local recovery history.
+Resolution: Preserve complete cache entries separately from partially loaded
+records and reconcile histories only when their event ancestry is compatible.
+Outcome: Recovery copies are retained; incompatible branches are not silently
+merged into a fabricated history.
+Evidence: dist/controllers/campaigns.js; dist/campaign-history.js;
+tests/repository.test.js; docs/ARCHITECTURE.md.
+
+2.7 Two browser sessions could overwrite newer campaign progress
+Problem: A stale device could save over a more recent board.
+Resolution: Commit saves transactionally using saveRevision and historyHead.
+Conflicts stop cloud writes, preserve the local recovery branch and require an
+explicit reload instead of silently choosing a competing history.
+Outcome: A stale save is rejected once the campaign uses versioned writes.
+Evidence: dist/campaign-store.js; dist/campaign-history.js; firestore.rules;
+tests/campaign-store.test.js; docs/DATABASE.md.
+
+2.8 Interrupted multi-batch saves could leave misleading event histories
+Problem: A board with a growing history needs more than one write batch; partial
+uploads must not appear as committed replay events or be rewritten on retry.
+Resolution: Stage immutable events in batches of at most 400, link them using
+previousEventId, and commit the board/head afterward. Readers follow only the
+committed chain. Retries remember successfully uploaded events.
+Outcome: Abandoned branches do not enter replay. Unreferenced staged documents
+are retained rather than deleting player data as a side effect of recovery.
+Evidence: dist/campaign-store.js; dist/campaign-history.js;
+tests/campaign-store.test.js.
+
+2.9 Storage improvements could break older saves or clients
+Problem: Moving from legacy JSON payloads to typed records and revision metadata
+could make existing campaigns unreadable or allow inconsistent older writes.
+Resolution: Keep compatible readers and temporary legacy payload dual-writes.
+Adopt versioned saves through ordinary use without bulk rewriting old events.
+Reject stale revisions or removal of revision metadata once a record is versioned.
+Outcome: Existing saves remain readable. Matching frontend/rules releases and
+refreshing old browser tabs are necessary for upgraded writes.
+Evidence: dist/game-schema.js; firestore.rules; docs/DATABASE.md.
+
+
+3. AI COMMENTARY: SETUP, SPEED, QUALITY AND COST
+=============================================
+
+3.1 AI commentary was missing despite "Gemini is ready"
+Problem: Settings indicated readiness, but no generated report appeared.
+Resolution: Separated configuration readiness from a successful generation
+request, exposed queue/error state, and tested generation, saving and display.
+The active integration now uses Firebase AI Logic rather than assuming a deployed
+Functions endpoint exists.
+Outcome: "Ready" does not prove the next network request will succeed. The user
+later confirmed commentary appeared on the published site.
+Evidence: dist/commentary.js; dist/cloud.js; scripts/gemini-browser-test.mjs.
+
+3.2 Local generation showed a generic temporary-unavailable message
+Problem: The page said "AI commentary is temporarily unavailable. Factual reports
+still update," which did not identify the actual failing request.
+Resolution: Investigated the browser origin and local AI setup, provided actionable
+status/retry handling and retained factual reports when generation fails.
+Outcome: The retained messages do not identify one proven root cause for every
+instance of that generic message. The local setup requirements are now explicit.
+Evidence: dist/commentary.js; scripts/dev-server.mjs; docs/FIREBASE.md.
+
+3.3 Different localhost ports were serving different development setups
+Problem: The browser was on localhost:8080 while the AI-enabled server was running
+on another port; later sessions used 8081 or 8082.
+Resolution: Documented npm run dev as the supported local AI entry point. It
+defaults to 8081; MERIDIAN_PORT can select another port when necessary.
+Outcome: A static server can serve gameplay but does not provide the development
+server's private App Check setup. The browser must use the intended server URL.
+Evidence: README.md; scripts/dev-server.mjs; tests/local-development.test.js.
+
+3.4 Local AI credentials could accidentally be published
+Problem: An App Check debug token placed inside public assets would be exposed
+when deploying the same files.
+Resolution: Store development attestation outside dist in ignored local storage.
+Serve it only from the loopback development server; keep the deployable local
+configuration stub empty and use production reCAPTCHA attestation on public hosts.
+Outcome: Local setup and hosted setup use different attestation paths.
+Evidence: scripts/local-app-check.mjs; dist/ai-local-config.js;
+scripts/dev-server.mjs; docs/FIREBASE.md.
+
+3.5 Gemini repeatedly hit usage limits
+Problem: Generating commentary for too many small events consumed the available
+quota and prompted questions about replacement models.
+Resolution: Reduced request frequency with priorities, bounded batching, cached
+reports, host-only multiplayer generation and failure cooldowns. Disabled AI and
+quota errors leave factual gameplay available.
+Outcome: Usage is reduced, not unlimited. The project still depends on the
+configured provider's quotas and availability.
+Evidence: dist/commentary.js; tests/commentary.test.js; docs/FIREBASE.md.
+
+3.6 Live commentary arrived after the game had moved on
+Problem: Gemini could not keep up with fast-moving events, especially bots and
+fast-forward, leaving a backlog of outdated narration.
+Resolution: Keep at most one pending highlight per account and campaign/room.
+New equal-priority events replace older pending events; more important outcomes
+can supersede an older in-flight report before it is saved.
+Outcome: Gameplay keeps moving and stale narration is skipped. It intentionally
+does not generate a separate AI report for every factual event.
+Evidence: dist/commentary.js; tests/commentary.test.js.
+
+3.7 Quiet decisions competed with major outcomes
+Problem/request: A routine move should not delay narration of a conquest,
+elimination or victory.
+Resolution: Prioritise victory, elimination, conquest, retreat/held, casualty dice,
+attack, then quieter decisions or tied dice. Keep account/match queues separate.
+Outcome: Important highlights win over less significant pending work. An existing
+equal-priority request may finish so continuous arrivals cannot starve all output.
+Evidence: dist/commentary.js; tests/commentary.test.js; docs/FIREBASE.md.
+
+3.8 AI generation was slow even without a large backlog
+Problem: Each request did too much work or waited behind failures.
+Resolution: Use a fast configured model, compact event-specific context, short
+12-to-28-word output guidance and minimal reasoning. Bound batches to six matches
+and pending work to twelve; requests time out rather than waiting indefinitely.
+Outcome: Provider response time still varies. The six-second spacing between
+request starts is not a guarantee that a report completes in six seconds.
+Evidence: dist/ai-config.js; dist/commentary.js; docs/FIREBASE.md.
+
+3.9 The first report on Vercel was slower than on localhost
+Problem: The user identified the first report as the main delay on the hosted
+site, rather than every subsequent report.
+Resolution: Prepare shared SDK/model state, cached sign-in tokens and App Check
+when entering an enabled campaign or hosted multiplayer game. Reuse concurrent
+preparation rather than starting it multiple times.
+Outcome: Preparation makes no generation request or extra report. It reduces
+setup overhead; it cannot eliminate the provider's response time.
+Evidence: dist/controllers/campaigns.js; dist/cloud.js; dist/commentary.js;
+tests/commentary-validation.test.js.
+
+3.10 Enabling commentary still seemed to require manual generation
+Problem/request: Switching AI on in Settings should start it without repeatedly
+clicking Generate commentary.
+Resolution: Enabling it during gameplay requests recent eligible action; newly
+saved events enqueue automatically afterward. Read-only/history views do not
+start generation, and non-host multiplayer players do not create requests.
+Outcome: Generate commentary remains an optional retry/refresh control. Opening
+an old campaign alone does not automatically narrate its entire history.
+Evidence: tests/commentary-settings.test.js; dist/controllers/events.js;
+dist/cloud.js; dist/multiplayer.js.
+
+3.11 The purpose of Generate commentary was unclear
+Problem/request: It was not clear why the button existed if live commentary was
+supposed to be automatic.
+Resolution: Keep it as an explicit retry for eligible missing/older reports,
+including finished campaigns. Consider the latest three eligible events and let
+the queue choose the most important one.
+Outcome: The button does not replay the whole match or change a game decision.
+Evidence: dist/commentary.js; dist/ui/reports.js; docs/FIREBASE.md.
+
+3.12 Commentary concentrated only on the human player
+Problem: Bot-versus-bot actions were missing from the narration's focus.
+Resolution: Generate from saved events for every commander, include both involved
+countries/players and test bot-versus-bot generation explicitly.
+Outcome: Narration covers the whole match rather than only seat zero's actions.
+Evidence: dist/commentary.js; tests/cloud.test.js; tests/commentary.test.js.
+
+3.13 The narrator spoke to the player instead of broadcasting the match
+Problem: Advice and second-person "you" wording sounded like a personal assistant
+rather than commentary about what everyone was doing.
+Resolution: Require impartial third-person play-by-play. Convert legacy "You"
+labels to neutral commander names only in AI context and reject detected
+viewer-directed phrasing.
+Outcome: Saved nicknames and factual log text are preserved. Older saved AI
+reports retain their original wording unless a versioned replacement is created.
+Evidence: dist/commentary.js; dist/commentary-validation.js;
+tests/commentary.test.js.
+
+3.14 The commentary was repetitive or lacked meaningful match context
+Problem: Generic summaries did not explain why an event mattered.
+Resolution: Supply event-time standings, preceding country counts, explicit lead
+changes, strategy-engine explanations and a bounded memory of earlier wording.
+Use event-specific instructions for attacks, defence, retreat and major outcomes.
+Outcome: Latest local prompt refinements remove literal sports framing while
+keeping the requested broadcast style. Naturalness still needs human review.
+Evidence: dist/commentary.js; scripts/commentary-preview.mjs;
+docs/ASSESSMENT.md.
+
+3.15 AI could invent losses or announce conquest/victory too early
+Problem: Fluent narration could contradict the recorded battle.
+Resolution: Include immutable event facts and exact verification anchors. Match
+responses to stable event IDs; reject missing/altered anchors and detected
+casualty contradictions, reversed comparisons or premature outcomes before saving.
+Outcome: Known error patterns are tested. These checks cannot prove the truth of
+every possible natural-language statement; AI never changes combat results.
+Evidence: dist/commentary-validation.js; tests/commentary-validation.test.js;
+tests/commentary.test.js.
+
+3.16 A conquest could make AI attribute the battle to the wrong defender
+Problem: Reading current ownership after capture can erase the original
+defender's identity; current standings can also leak later events into narration.
+Resolution: Use attack/event-time snapshots and strictly earlier context. Preserve
+the original attacker and defender when describing the recorded battle.
+Outcome: Later board changes do not redefine an earlier event's participants.
+Evidence: dist/commentary.js; tests/commentary.test.js.
+
+3.17 Every multiplayer browser might request the same AI report
+Problem/concern: Friends receiving the same event could each spend AI quota on it.
+Resolution: Only the host requests and saves shared room commentary. Friends
+receive the stored report through the room/report listeners.
+Outcome: Ordinary viewers do not generate duplicate room requests. Concurrent
+host tabs can still request the same event before either saves a result; there
+is no distributed generation lease guaranteeing exactly one model call.
+Evidence: dist/multiplayer.js; dist/cloud.js; tests/commentary-settings.test.js;
+docs/FIREBASE.md.
+
+3.18 Reloads, replays or late responses could duplicate/misplace reports
+Problem: Regenerating saved text wastes quota; a response arriving after sign-out
+could be saved into the wrong session.
+Resolution: Cache reports by event ID and narration version, reuse persisted
+results transactionally, scope wording memory to the account/match and discard
+queued work and late responses after sign-out. Keep original report versions.
+Outcome: Replay/reload reads saved reports without automatic historical backfill.
+Concurrent tabs remain the limitation described above.
+Evidence: dist/commentary.js; tests/commentary.test.js; docs/FIREBASE.md.
+
+3.19 An AI failure could freeze or break the game
+Problem: Quota errors, timeouts or rejected narration should not block turns.
+Resolution: Keep generation asynchronous and separate from the engine and factual
+feed. Use actionable status, retry controls and bounded cooldowns.
+Outcome: Gameplay and factual reports continue when AI is unavailable. Temporary
+overload/timeouts use shorter cooldowns before subsequent queued requests; other
+failures retain longer cooldowns. Failed events can be explicitly requested again.
+Evidence: dist/commentary.js; tests/commentary.test.js; dist/ui/reports.js.
+
+3.20 Alternative models, subscription plans and screen-watching were considered
+Problem/concern: Questions were raised about Claude, GPT/Turbo, open models,
+student Gemini access, ChatGPT Pro and multimodal screen capture.
+Resolution/decision: The implemented application remained on the configured
+Gemini API integration. It narrates structured game events rather than watching
+screens frame by frame. No alternative-provider migration or unlimited allowance
+was established by the retained record.
+Outcome: These were explored options, not completed provider replacements. Model
+names, commercial entitlements and limits must not be treated as permanent facts.
+Evidence: dist/ai-config.js; dist/commentary.js; docs/FIREBASE.md.
+
+
+4. GAMEPLAY TIMING, REPORTS AND MAP PRESENTATION
+=============================================
+
+4.1 Troop losses appeared before the dice finished animating
+Problem: The result was visible while the cosmetic dice were still rolling.
+Resolution: Keep committed engine facts unchanged but render a temporary copy of
+the preceding board until the roll clock settles. Hide subsequent loss, conquest
+and victory presentation during that interval.
+Outcome: Normal dice take 1.1 seconds; fast dice take 0.55 seconds. Reduced motion
+reveals immediately. AI/feed updates use the same presentation timing.
+Evidence: dist/motion.js; dist/ui/battle.js; tests/motion.test.js.
+
+4.2 Bot-versus-bot casualty reports were missing
+Problem: The phase report stating how many soldiers each side lost was absent
+at both normal and fast speed. The country names in the screenshot were examples.
+Resolution: Render recorded attacker/defender losses for bot battles too, with
+country-specific feedback after the reveal. Recover compatible legacy losses
+from saved board changes or paired dice when necessary.
+Outcome: Loss feedback uses the actual participants; ties invent no casualties.
+Evidence: dist/motion.js; dist/ui/battle.js; tests/motion.test.js;
+scripts/battle-browser-test.mjs.
+
+4.3 Bots acted before their decisions could be read
+Problem: Testers could not read what a bot intended before the dice/action began.
+Resolution: Persist and display the decision first, pause five seconds, then
+execute it. In multiplayer the host records intent and execution separately.
+Outcome: Both modes have reading time. Reduced motion retains the pause;
+single-player Fast forward deliberately shortens it. AI continues independently.
+Evidence: dist/controllers/npcs.js; dist/rooms.js; dist/multiplayer.js;
+dist/motion.js; tests/rooms.test.js.
+
+4.4 Replays moved too quickly
+Problem: Autoplay advanced before the previous event could comfortably be read.
+Resolution: Pace replay autoplay at five seconds per event and retain pause,
+previous/next and direct event selection.
+Outcome: Slower replay does not alter recorded dice, events or game results.
+Evidence: dist/controllers/events.js; dist/ui/campaigns.js; README.md.
+
+4.5 The first attempt to reduce scrolling was not wanted
+Problem: A broader gameplay UI change did not match the preferred interface.
+Resolution/decision: The user requested a revert and subsequently asked for
+smaller changes that preserved the established UI. The later solution uses the
+existing report panel rather than replacing the whole game layout.
+Outcome: Keep this as a design reversal, not proof of a Firebase rollback. The
+retained messages do not identify every file changed in that early experiment.
+Evidence: Conversation requests; dist/ui/reports.js; docs/FIREBASE.md.
+
+4.6 Factual reports and AI commentary were mixed together
+Problem/request: Generated narration needed its own tab beside Field reports.
+Resolution: Added separate Field reports and AI commentary tabs. Keep factual
+events in one feed and AI text, queue/error state and generation controls in the
+other. Preserve the active tab across game updates.
+Outcome: Switching tabs changes presentation without generating a request or
+modifying campaign history. The user confirmed satisfaction with this direction.
+Evidence: dist/ui/reports.js; docs/FIREBASE.md; scripts/battle-browser-test.mjs.
+
+4.7 Reading reports required constant scrolling away from the map
+Problem: Players had to move repeatedly between the battlefield and its reports.
+Resolution: Add Pin reports, with collapse/expand and Unpin using the existing
+panel. Dock it within the map column and keep tab/collapse preferences in UI state.
+Outcome: Reports stay accessible during play without changing saved game data.
+Evidence: dist/ui/reports.js; dist/styles.css; docs/FIREBASE.md.
+
+4.8 Pinned commentary obscured too much of the map
+Problem: Opening the report dock made it difficult to see the entire world map.
+Resolution: Fit the map proportionally into the space above the expanded dock
+and use a shorter report area on shorter windows. Restore the normal map size
+when the panel is collapsed or unpinned.
+Outcome: The map is resized without stretching its geography vertically.
+Evidence: dist/ui/reports.js; dist/styles.css; scripts/battle-browser-test.mjs.
+
+4.9 Decorative map information reduced useful map space
+Problem/request: The map panel's headings/footer information took space that was
+wanted for the map itself; an earlier interpretation added unwanted height/info.
+Resolution: Simplified the gameplay theatre framing so the map uses the available
+panel area, while preserving the world projection and gameplay controls.
+Outcome: This was a presentation adjustment, not a change to country coordinates
+or combat rules. The user confirmed the clarified direction.
+Evidence: dist/ui/map.js; dist/ui/battle.js; dist/styles.css.
+
+4.10 Pin reports later covered the map or controls again
+Problem: Changing the map layout exposed an overlap in the fixed report dock.
+Resolution: Measure the dock's real height, reserve scrolling space below the
+page, align to the current map column and recalculate on resize. Release reserved
+space when leaving the view or unpinning.
+Outcome: Controls can scroll clear of the dock. Incoming reports preserve scroll,
+the selected tab, collapse state and the ongoing dice presentation.
+Evidence: dist/ui/reports.js; dist/styles.css; scripts/battle-browser-test.mjs.
+
+4.11 Nearby dots and country names overlapped
+Problem: Monaco/Italy and other tightly grouped territories became hard to read,
+especially with a smaller map. Simply stretching the map risked distortion.
+Resolution: Keep geographic dots fixed and move only conflicting text to nearby
+free positions. Measure screen-space spacing and recalculate after resizing or
+font loading; reset original offsets before each measurement.
+Outcome: The handling applies generally, including dense island fixtures. It is
+a bounded placement search; if no candidate fits, it keeps the original position.
+Evidence: dist/ui/map-labels.js; scripts/map-browser-test.mjs.
+
+4.12 Moved labels had unclear or unwanted connector lines
+Problem/request: Initially connectors were wanted only for the shrunken map;
+later thin lines were considered unreadable and solid thick lines were requested
+for both map sizes.
+Resolution: The latest implementation draws solid commander-coloured connectors
+for displaced labels, hides them when no label movement is needed and uses a
+2.5-unit stroke. Later instructions supersede the earlier compact-only preference.
+Outcome: Country dots retain their real map positions; lines associate moved
+labels with those dots rather than changing the countries' locations.
+Evidence: dist/ui/map.js; dist/ui/map-labels.js; dist/styles.css.
+
+4.13 Thick horizontal lines unexpectedly crossed the world map
+Problem: Long solid lines appeared across the ocean/world after earlier work,
+which was initially suspected to be related to Firebase or the UI revert.
+Resolution: Clip the Russia and Fiji outlines at the antimeridian so polygon
+closures cannot cross the visible map interior. Preserve other outlines and the
+existing projection/marker coordinates.
+Outcome: This is a map-geometry correction, separate from intentional label
+connectors and unrelated to database contents.
+Evidence: scripts/fix-map-seams.mjs; dist/assets/world-paths.js;
+tests/map.test.js.
+
+4.14 It was unclear whether moved country names were still selectable
+Problem/concern: Readable labels would be less useful if they could not select
+the intended country for an attack.
+Resolution: Keep the marker/label associated with the country selection action,
+with roster and action controls also available. Legal attacks still require an
+owned attacking country and an eligible enemy target on the player's turn.
+Outcome: Selecting a country is not an immediate unconditional attack.
+Evidence: dist/ui/map.js; dist/controllers/events.js; dist/ui/battle.js.
+
+4.15 Fast forward, Share and Replay were duplicated near the header
+Problem/request: These actions already existed elsewhere and added clutter.
+Resolution: Removed the redundant top-row controls while retaining the established
+locations for those actions.
+Outcome: Navigation was simplified without removing the underlying capabilities.
+Evidence: dist/ui/navigation.js; dist/ui/campaigns.js; dist/ui/battle.js.
+
+4.16 The home-page map felt static
+Problem/request: The startup map needed more life, then needed to resemble
+actual gameplay rather than only decorative motion.
+Resolution: Added an isolated welcome demonstration using game-like map actions
+and presentation. It does not save campaigns or make Gemini requests.
+Outcome: The home page can demonstrate activity without affecting a real match.
+Evidence: dist/ui/welcome-demo.js; dist/ui/campaigns.js.
+
+4.17 The home page showed war-room navigation/settings
+Problem/request: The full game navigation bar was unwanted on the landing page
+but still needed after entering the war room.
+Resolution: Render navigation according to the current route/view and retain the
+in-game controls inside the war-room experience.
+Outcome: Home-page simplification does not remove navigation from gameplay.
+Evidence: dist/ui/navigation.js; dist/ui/campaigns.js; dist/app.js.
+
+4.18 Animation settings needed sensible defaults
+Problem/request: Animations should be on by default for players.
+Resolution: Keep normal animations as the default experience while preserving
+the explicit animation preference and reduced-motion handling.
+Outcome: Turning animations off changes presentation, not rules. Reading pauses
+are separate from cosmetic animation preferences.
+Evidence: dist/motion.js; dist/controllers/settings.js; tests/motion.test.js.
+
+
+5. MULTIPLAYER GAMEPLAY AND LOBBIES
+=================================
+
+5.1 Friends could not join one shared campaign
+Problem/request: The game needed an Among Us-style room-code flow and bots to
+fill remaining seats after friends joined.
+Resolution: Added six-character room codes, authenticated create/join flows,
+membership checks, host-controlled starting and bot fill up to ten countries.
+Outcome: Shared state is stored in Firestore and delivered through listeners.
+Evidence: dist/rooms.js; dist/multiplayer.js; tests/rooms.test.js.
+
+5.2 The multiplayer entry banner took unnecessary space
+Problem/request: A large "Bring your friends" section was less suitable than a
+button beside New campaign.
+Resolution: Integrated the entry point into campaign/navigation actions while
+keeping the create/join room screen.
+Outcome: This was a navigation change rather than a different multiplayer system.
+Evidence: dist/ui/campaigns.js; dist/ui/navigation.js.
+
+5.3 Multiplayer looked different from single-player
+Problem: Multiplayer had a separate presentation instead of the familiar game UI.
+Resolution: Use the shared board, map, report panel and local selection/allocation
+helpers. Route multiplayer actions through room transactions behind that UI.
+Outcome: The interface is shared while persistence and authority checks remain
+appropriate to each mode.
+Evidence: dist/ui/battle.js; dist/multiplayer.js; tests/views.test.js;
+scripts/multiplayer-ui-browser-test.mjs.
+
+5.4 Friends could not choose their starting countries
+Problem/request: Each person needed to reserve a preferred country before play.
+Resolution: Added member-owned, unique country choices in the lobby. Lock choices
+when opening rolls start and assign bots distinct remaining countries.
+Outcome: A player cannot reserve another member's choice or select a duplicate.
+Existing active rooms retain their recorded setup.
+Evidence: dist/room-setup.js; tests/room-setup.test.js; firestore.rules.
+
+5.5 First player selection was unclear and not interactive
+Problem/request: Every human should roll a die to determine who starts.
+Resolution: Persist each member's own opening roll, roll automatically for bots,
+find the highest face and allow only tied leaders to reroll. The host starts once
+a unique winner exists; subsequent turns follow the seat order from that winner.
+Outcome: Reloading keeps recorded rolls. Repeated clicks and stale tie-break
+actions cannot replace a completed roll. Dice still use the browser trust model.
+Evidence: dist/room-setup.js; tests/room-setup.test.js;
+tests/security/firestore.test.js.
+
+5.6 Friends needed their own "Your turn" and owned-country controls
+Problem: Treating everyone as host/seat zero would show the wrong permissions,
+army allocation or attack choices on another player's screen.
+Resolution: Resolve the local member's seat for all shared rendering and actions.
+Validate active-turn ownership again when applying the room transaction.
+Outcome: Each person sees their own controls and other players' recorded names.
+Evidence: dist/ui/battle.js; dist/multiplayer.js; tests/views.test.js;
+tests/rooms.test.js.
+
+5.7 Simultaneous/stale clicks or forged moves could corrupt room state
+Problem/concern: A client could submit an old move, act for another member or bot,
+or manipulate armies outside a legal move.
+Resolution: Use transaction revisions, membership/controller checks and bounded
+Firestore validation. Latest local rules restrict noncombat changes to owned
+countries, exact reinforcement spending, two-country transfers and proper round
+advancement. Tests include legal large allocations as well as rejected tampering.
+Outcome: Validation is stronger; browser dice and full combat remain trusted.
+The latest noncombat refinements are local pending coordinated publication.
+Evidence: dist/rooms.js; firestore.rules; tests/security/firestore.test.js.
+
+5.8 A host leaving or losing raised continuity concerns
+Problem/limitation: Shared bots/commentary need a responsible browser; host
+elimination must not automatically end a match with surviving friends.
+Resolution: Separate player elimination from game victory, allow existing members
+to reconnect and keep host-controlled bot/report processing in the host browser.
+Outcome: Host elimination is supported, but closing that browser stops its
+processing. Host migration and replacing disconnected humans are not implemented.
+Evidence: tests/rooms.test.js; dist/multiplayer.js; docs/FIREBASE.md.
+
+5.9 Voice chat through Agora was considered
+Problem/request: Friends might want to speak while playing.
+Resolution/decision: Voice chat was discussed as a possible addition.
+Outcome: No Agora voice-chat implementation is established in the current source.
+Do not present it as a finished feature or a resolved defect.
+Evidence: Conversation request; current architecture in docs/ARCHITECTURE.md.
+
+
+6. POPULATION DATA AND ASSIGNMENT DATA COVERAGE
+=============================================
+
+6.1 Population figures were bundled rather than following the required website
+Problem/request: The user wanted the population source from the assignment link
+instead of values that could remain unchanged forever.
+Resolution: Added a Worldometers table updater and a validated population snapshot
+pipeline rather than scraping the site directly during a player's turn.
+Outcome: The application can adopt validated source updates. Population data is
+still an estimate from the source table, not a per-second population counter.
+Evidence: dist/populations.js; scripts/update-populations.mjs; README.md.
+
+6.2 A website outage or changed table could crash startup or corrupt data
+Problem/concern: Automatic population fetching must not compromise the game.
+Resolution: Validate headers, complete country coverage, integer counts, dates,
+years and unexpectedly large changes. Keep the last known-good cache and bundled
+fallback; failed checks leave the previous snapshot in place.
+Outcome: Gameplay never waits for Worldometers. Legitimate changes beyond the
+configured 25 percent threshold require review rather than silent acceptance.
+Evidence: dist/population-schema.js; scripts/update-populations.mjs;
+tests/populations.test.js; scripts/population-browser-test.mjs.
+
+6.3 Automatic updates needed to work after static hosting
+Problem/request: A local scraper alone would not keep a deployed site current.
+Resolution: Added a daily GitHub Actions workflow and restricted updater identity
+for the public Firestore population reference. Local development checks at
+startup and daily while the development server runs.
+Outcome: A source website update is not instantly pushed into every browser.
+Hosted automation needs the workflow on the default branch, enabled Actions and
+configured secrets; the current scheduler's live execution was not rechecked for
+this document. Bundled changes require redeployment to replace the fallback.
+Evidence: .github/workflows/populations.yml; scripts/configure-populations.mjs;
+scripts/local-populations.mjs; docs/FIREBASE.md.
+
+6.4 New population figures could change an existing campaign's balance
+Problem/concern: A live update should not alter soldiers/rewards halfway through
+a previously saved game.
+Resolution: Snapshot the population and original army value into the game record.
+Use validated updated reference data for new setups without rewriting old games.
+Outcome: Existing campaigns retain their starting values and reward basis.
+Evidence: dist/game-schema.js; dist/populations.js; tests/populations.test.js.
+
+6.5 A limited country list did not cover all countries in the required table
+Problem/assignment gap: A small original catalogue excluded countries and tiny
+territories that the source data allowed.
+Resolution: Build a catalogue of all 234 countries/territories, keep original
+saved-country metadata compatible and provide markers/roster selection even
+where the bundled outline map has no separate shape.
+Outcome: Microstates such as Vatican City are selectable. Country metadata and
+population values retain their separate source/attribution records.
+Evidence: scripts/build-country-catalogue.mjs; dist/country-catalogue.js;
+scripts/catalogue-browser-test.mjs; dist/assets/COUNTRY_DATA_CREDITS.txt.
+
+
+7. TUTORIAL, VISITORS AND LIVE SHARING
+====================================
+
+7.1 New players did not have guided practice
+Problem/request: A new account needed an interactive tutorial, not just a static
+home-page demonstration or a long instructions page.
+Resolution: Added a practice campaign with one task at a time using the normal
+engine and guided dice. First-time sign-in offers the tutorial.
+Outcome: Practice does not write cloud campaigns, join rooms or request Gemini.
+Evidence: dist/tutorial.js; dist/ui/tutorial.js; tests/tutorial.test.js;
+scripts/tutorial-browser-test.mjs.
+
+7.2 It was unclear whether the tutorial covered the supplied instructions
+Problem/request: The user supplied Instructions.txt and asked whether everything
+was taught, including detailed dice and reinforcement examples.
+Resolution: Map all 26 numbered instruction sections to lessons/expanded help.
+Include the paired-dice example, ties, retreat, capture reward, transfers,
+reinforcement timing, bots, elimination and victory.
+Outcome: The coverage document records where each topic is taught and preserves
+the game's current automatic one-soldier capture garrison behavior.
+Evidence: docs/TUTORIAL.md; dist/ui/tutorial-lessons.js; tests/tutorial.test.js.
+
+7.3 A livelier tutorial redesign became overwhelming
+Problem: Adding more visible detail and decorative animation made the tutorial
+feel crammed rather than easier to understand.
+Resolution/decision: Reverted that presentation direction. Keep a compact guide
+beside the controls with optional Rules & examples and the ordinary battle
+animations, rather than extra decorative animations.
+Outcome: The tutorial keeps broad coverage without showing every explanation at
+once. This was a deliberate rollback of a design experiment.
+Evidence: docs/TUTORIAL.md; dist/ui/tutorial.js; dist/tutorial.css.
+
+7.4 A sign-in-or-guest prompt was requested and then cancelled
+Problem/request: Entering the war room was briefly going to offer guest play.
+Resolution/decision: After clarifying the brief's permission requirement, the
+user explicitly said "nevermind abort mission."
+Outcome: Do not describe unrestricted guest turn-taking as an implemented feature.
+Visitors use read-only viewing; real cloud gameplay requires the signed-in flow.
+Evidence: Conversation cancellation; dist/cloud.js; dist/spectators.js.
+
+7.5 Recorded replays/snapshots were not true live visitor viewing
+Problem/assignment concern: A visitor should be able to observe ongoing play
+without receiving permission to play turns or read private account data.
+Resolution: Publish an explicit allowlisted gameplay projection under liveGames
+and subscribe anonymously using a known #live link. Bound the feed to 60 recent
+events, exclude account credentials/emails and keep private histories owner-only.
+Outcome: Visitors see updates but cannot move, run bots or request AI. The owner
+must keep playing for the feed to progress; legacy #watch snapshots still work.
+Evidence: dist/spectators.js; firestore.rules; tests/spectators.test.js;
+scripts/spectator-browser-test.mjs.
+
+7.6 Live sharing needed revocation and an obvious copy control
+Problem/request: The sharing path was unclear, and a small copy icon was wanted
+beside Skip turn.
+Resolution: Keep the campaign-card share action and add a compact live-link copy
+button beside Skip turn for eligible owned campaigns. Stop sharing removes the
+public copy while retaining the private campaign and full history.
+Outcome: The new in-game button is local. Friends need a public deployment link;
+a localhost URL works only on the machine serving it. Sharing is explicit opt-in.
+Evidence: dist/ui/battle.js; dist/ui/campaigns.js; dist/spectators.js;
+scripts/spectator-browser-test.mjs.
+
+
+8. PASSWORD RESET AND CUSTOM EMAIL WORDING
+========================================
+
+8.1 Forgot password needed a real reset flow
+Problem/request: The sign-in interface needed to send an actual password-reset
+message rather than merely show a link or placeholder.
+Resolution: Connect the reset action to Firebase sendPasswordResetEmail and
+display success/error feedback through the authentication UI.
+Outcome: Firebase supplies the real one-time action link. A static example URL
+containing mode=action and oobCode=code is not a usable reset token.
+Evidence: dist/cloud.js; dist/ui/navigation.js.
+
+8.2 Requested email text described verification instead of password reset
+Problem: The supplied wording said "verify your email address," although the
+desired action was Forgot password, and used a non-Firebase username placeholder.
+Resolution: Clarified that it should be a reset email. Prepared the requested
+greeting, reset wording and "Kind Regards / Meridian Conquest team" using
+%DISPLAY_NAME% and %LINK%, with a narrow backup/apply/readback script.
+Outcome: Firebase rejected the update with EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED on
+1 November. Readback confirmed the default email remained unchanged. The custom
+template and support request are ready locally; the custom wording is NOT live.
+Evidence: docs/email-templates/password-reset.html;
+scripts/configure-password-reset-email.mjs; docs/email-templates/SUPPORT.md;
+docs/FIREBASE.md.
+
+
+9. CODING PRACTICE, SECURITY, ASSESSMENT AND DEPLOYMENT
+====================================================
+
+9.1 Large modules and duplicated logic were difficult to maintain
+Problem: The user repeatedly requested DRY, simple design and descriptive names,
+particularly in app.js and functions/commentary.js.
+Resolution: Separate views, controllers, game rules, storage, room setup and AI
+responsibilities. Reuse common army/reward calculations, profile helpers and
+browser-server fixtures instead of copying blocks across modes/scripts.
+Outcome: Refactoring preserves the engine and compatible saves. The Functions
+module is maintained but is not the active deployed AI service.
+Evidence: docs/ARCHITECTURE.md; CONTRIBUTING.md; dist/controllers/;
+functions/commentary.js; scripts/lib/static-server.mjs.
+
+9.2 Extremely long lines made source difficult to read
+Problem: One-line templates, dense blocks and long expressions remained after
+an earlier clean-up. The user asked for formatting without behavior/UI changes.
+Resolution: Apply consistent Prettier formatting and a maintained-JavaScript
+line-length check. Use a 100-character target/120-character limit, with documented
+exceptions. Preserve embedded HTML and prompt-string whitespace deliberately.
+Outcome: Formatting work is distinct from feature changes. Generated data/assets
+are excluded rather than hand-reformatted.
+Evidence: eslint.config.js; .prettierrc.json; .prettierignore; CONTRIBUTING.md.
+
+9.3 Functions, blocks and tests lacked explanations
+Problem/request: More comments were needed, including why each unit test exists.
+Resolution: Add purpose comments to maintained modules and non-obvious blocks;
+document account races, immutable history, delayed reveals and unusual fixtures.
+Add rationale comments for all 215 unit/security tests in the reviewed version.
+Outcome: Comments explain intent instead of repeating every assignment. Contributor
+guidance now asks future tests to state the user guarantee/regression they protect.
+Evidence: CONTRIBUTING.md; tests/; dist/; scripts/; functions/.
+
+9.4 Refactoring raised repeated fears of breaking a working game
+Problem: The user specifically asked that core rules, UI and Firebase behavior
+not change as a side effect of code quality work.
+Resolution: Use engine regression tests, browser workflows and actual Firestore
+emulator checks. A prior quality comparison matched 1,182 legal action steps
+against the saved engine across four difficulty levels. Later comment review
+compared normalized executable JavaScript and non-comment style/rule content.
+Outcome: The comment review found no runtime/UI/Firebase-logic changes; its only
+executable change repaired an integration-test script. This does not imply all
+earlier feature/security changes were formatting-only.
+Evidence: docs/ASSESSMENT.md; tests/engine.test.js; scripts/quality-browser-test.mjs;
+scripts/nickname-browser-test.mjs.
+
+9.5 The nickname integration test no longer matched multiplayer setup
+Problem discovered during review: It skipped country selection/opening dice,
+expected removed selectors and raced the new-account tutorial offer.
+Resolution: Use the normal tutorial skip, wait for readiness, reserve countries,
+complete human opening rolls and assert the shared turn-order/roster. Test-only
+controlled dice keep the fixture deterministic without changing the application.
+Outcome: The real two-account nickname check passed and temporary fixtures were
+removed. This was a test repair, not a change to multiplayer rules.
+Evidence: scripts/nickname-browser-test.mjs.
+
+9.6 Security had to improve while retaining the free plan
+Problem/request: Stronger validation was needed without deploying a paid trusted
+game server or breaking legal actions.
+Resolution: Validate schema, ownership, membership, revisions, immutable events,
+report shape and bounded move arithmetic. Use emulator tests for both rejected
+tampering and legal nine-country reinforcement, conquest and extended bot play.
+Outcome: Browser dice and full combat are not independently authoritative. The
+Spark game is suitable for trusted friends; validation is not complete anti-cheat.
+Evidence: firestore.rules; dist/game-schema.js; tests/security/firestore.test.js;
+docs/DATABASE.md.
+
+9.7 Stronger rules could reject valid large moves or exceed evaluation limits
+Problem encountered during validation: Checking many countries/branches can
+exceed Firestore's expression budget or block a legal reinforcement/conquest.
+Resolution: Use bounded fixed-size delta checks and a focused playing-state path;
+cache shared values and exercise worst-case legal setups in the emulator.
+Outcome: The latest local set passed 15 rules tests, including ten-human setup,
+nine-country reinforcement and final conquest. Those rules are not all published.
+Evidence: firestore.rules; tests/security/firestore.test.js; docs/ASSESSMENT.md.
+
+9.8 Dependency/tooling assumptions made checks less reproducible
+Problem identified during review: Unpinned or globally assumed tools, dependency
+vulnerabilities and differing browser/Node installations complicated maintenance.
+Resolution: Use Node LTS guidance, lockfiles, project-local pinned Firebase CLI and
+Playwright, shared browser discovery and narrow documented dependency overrides.
+Use Java 21 for the isolated rules emulator and CI for repeatable checks.
+Outcome: Tooling changes are separate from browser gameplay; live account/AI tests
+remain deliberate operations outside ordinary offline checks.
+Evidence: package.json; .nvmrc; scripts/lib/browser.mjs;
+.github/workflows/checks.yml; CONTRIBUTING.md.
+
+9.9 Assignment compliance and marking evidence were unclear
+Problem/request: The project needed review against both the brief and marksheet,
+with gaps fixed and concrete evidence for database, OOP, validation and AI use.
+Resolution: Add architecture/database documentation, tutorial coverage, examiner
+read-only database grants and an evidence checklist mapping all fourteen criteria.
+Add actual permission, gameplay, recovery and AI evaluation checks.
+Outcome: Estimated marks in the conversation are advisory, not an official grade.
+Required university packaging and submission still need to be followed separately.
+Evidence: docs/ASSESSMENT.md; docs/ARCHITECTURE.md; docs/DATABASE.md;
+docs/TUTORIAL.md; scripts/grant-examiner-access.mjs.
+
+9.10 Vercel readiness involved more than uploading the home page
+Problem: Static assets, routes, private configuration, caching and Firebase/Gemini
+authorization all needed to work on a public hostname.
+Resolution: Add Vercel configuration, serve dist, restrict uploads with
+.vercelignore, revalidate application assets and register the exact production
+domain in Firebase Auth and the reCAPTCHA Enterprise key.
+Outcome: Published at https://meridian-conquest.vercel.app. The user confirmed AI
+commentary in their normal browser. Existing Firebase accounts/data were retained.
+Evidence: vercel.json; .vercelignore; scripts/configure-hosting-domain.mjs;
+tests/hosting-domain.test.js; docs/VERCEL.md.
+
+9.11 Automated production sign-in/AI checks hit browser verification restrictions
+Problem: Firebase/reCAPTCHA rejected the automated browser's normal attestation
+because it did not receive sufficient trust.
+Resolution: Used temporary debug attestation for the automated live check and
+separately asked the owner to verify commentary in an ordinary browser.
+Outcome: The owner confirmed it worked. Automated debug-provider success alone
+does not prove ordinary production reCAPTCHA succeeded. Test attestations and
+temporary test data were removed rather than disabling production enforcement.
+Evidence: docs/VERCEL.md; scripts/gemini-browser-test.mjs.
+
+9.12 Publishing only the frontend could break cloud saving or live viewing
+Problem: Vercel deployments do not automatically update Firestore rules/indexes;
+new client fields can be rejected by older rules.
+Resolution: Publish compatible frontend and Firestore configuration as a
+coordinated release, then verify existing-campaign loading, saves, Gemini,
+spectators/revocation and two-player gameplay on the public host.
+Outcome: The quality release and matching rules were published on 1 November.
+Later local refinements require their own reviewed release; source presence is
+not evidence that the live site already contains them.
+Evidence: docs/VERCEL.md; docs/FIREBASE.md; firestore.indexes.json.
+
+9.13 Pushing GitHub, deploying Vercel and serving localhost were confused
+Problem/concern: It was unclear whether an update was on GitHub, the public site,
+localhost:8081 or localhost:8082.
+Resolution: Document the deployment path and local server entry point. Current
+Vercel publishing used CLI uploads; automatic Git deployments were not connected.
+Outcome: These are three independent states. A Git push does not publish the
+current CLI-linked site, and a local change does not alter the deployed release.
+Evidence: README.md; docs/VERCEL.md; scripts/dev-server.mjs.
+
+9.14 Unapproved publishing and unnecessary migrations were a concern
+Problem/constraint: Several times the user asked to keep work local or cancelled
+a proposed action, even while requesting other improvements.
+Resolution/decision: Keep those revisions local until publishing is requested.
+Avoid bulk campaign/event rewrites and keep compatibility/recovery paths. Treat
+an explicit rollback or cancelled feature as its own decision.
+Outcome: This history distinguishes local work, published releases, reverted
+experiments and provider-blocked work instead of calling everything finished/live.
+Evidence: Conversation decisions; docs/FIREBASE.md; docs/DATABASE.md;
+docs/VERCEL.md.
+
+
+10. SUBMISSION FILE CLEANUP
+==========================
+
+10.1 Audio credit/licence text files were unwanted in the submission
+Problem/request: The audio folder contained four text notices. Moving them to a
+separate licence folder did not satisfy the request; the user wanted them out.
+Resolution: First relocated them and adjusted the link. After clarification,
+deleted CREDITS.txt and the three Kenney audio licence text files entirely, then
+removed their link and updated README wording.
+Outcome: The sound files and playback code were not changed. Existing on-screen
+music/sound credits remain. Country-data and world-atlas notices were not part of
+that request and remain separate from this audio cleanup.
+Evidence: dist/assets/audio/; dist/index.html; README.md;
+dist/assets/COUNTRY_DATA_CREDITS.txt; dist/assets/world-atlas-LICENSE.txt.
+
+
+VERIFICATION RECORD AND REMAINING WORK
+======================================
+
+The latest recorded local check passed formatting, lint and 200 unit tests. The
+latest rules refinement passed 15 isolated emulator tests. The subsequent comment
+review covered 215 test-purpose comments across those unit/security tests and
+passed the real nickname workflow. These counts describe the checked revision,
+not a promise about a future version or a newly executed test run today.
+
+The eight-scenario real-Gemini preview covered human/bot pressure, stalemate,
+territorial lead changes, retreat, defence holding, elimination and victory.
+Two requests took 10.3 seconds on that run. This observed timing is not a service
+guarantee. Generated prose still needs review alongside automated factual checks.
+
+Known unfinished or conditional items:
+
+- Custom reset-email wording: blocked by Firebase's template-edit restriction.
+- Latest local source/rules/UI cleanup: needs an explicitly authorised release.
+- Exactly one model call across concurrent tabs: not guaranteed.
+- Unlimited or instant AI: not guaranteed; provider limits and latency remain.
+- Authoritative dice/complete competitive anti-cheat: requires a different backend.
+- Host migration/background play/Agora voice chat: not implemented.
+- Dense-map labels: bounded collision avoidance improves readability but does
+  not mathematically guarantee a free position for every possible arrangement.
+- Daily hosted population refresh: depends on the workflow being enabled and
+  successfully running, not merely on the source website changing.
+- University submission: follow the actual ZIP, README, access and submission
+  instructions; this document does not submit or officially mark the assignment.
+
+Numbered recommendation lists referred to in older messages were not always
+retained in full. This record describes the confirmed work instead of inventing
+the original wording of missing "1 to 4" or similarly numbered recommendations.
+
+End of development problem and solution history.

@@ -29,6 +29,15 @@ export default [
   },
   {
     rules: {
+      // Catch accidental coercion and mutable declarations without imposing architectural limits.
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      'no-var': 'error',
+      'prefer-const': 'error',
+      // Generated assets are excluded above; ordinary templates must remain readable too.
+      'max-len': [
+        'error',
+        { code: 120, comments: 120, ignoreUrls: true, ignoreRegExpLiterals: true },
+      ],
       'no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },

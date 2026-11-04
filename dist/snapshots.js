@@ -1,20 +1,29 @@
 import { difficultyFor } from './difficulty.js';
-import { findCountry } from './data.js';
-import { savedCountryPopulation } from './data.js';
+import { findCountry, savedCountryPopulation } from './data.js';
+import { EVENT_TYPES } from './game-schema.js';
+import { normalizeCampaignCountries } from './country-compatibility.js';
 
-export function encodeSnapshot(g) {
-  const clean = { ...g, events: g.events.slice(-60) };
-  return btoa(unescape(encodeURIComponent(JSON.stringify(clean))))
+/** Encode a bounded, URL-safe snapshot; unlike a live link, its board never updates. */
+export function encodeSnapshot(game) {
+  const clean = { ...game, events: game.events.slice(-60) };
+  // Base64 works on bytes; encode Unicode names without deprecated escape/unescape.
+  const bytes = new TextEncoder().encode(JSON.stringify(clean));
+  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
 
+/** Validate an old shared URL and restore display metadata from the trusted catalogue. */
 export function decodeSnapshot(text) {
-  if (!text || text.length > 180000)
+  if (typeof text !== 'string' || !text || text.length > 180000)
     throw new Error('This shared snapshot is missing or too large.');
   const data = JSON.parse(
-    decodeURIComponent(escapeBinary(atob(text.replace(/-/g, '+').replace(/_/g, '/')))),
+    new TextDecoder('utf-8', { fatal: true }).decode(
+      Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (byte) =>
+        byte.charCodeAt(0),
+      ),
+    ),
   );
   if (
     !data ||
@@ -57,25 +66,13 @@ export function decodeSnapshot(text) {
     data.round < 1
   )
     throw new Error('Invalid turn in shared snapshot.');
-  const allowedTypes = new Set([
-    'campaign',
-    'turn',
-    'decision',
-    'attack',
-    'dice',
-    'conquest',
-    'reinforce',
-    'transfer',
-    'elimination',
-    'victory',
-    'retreat',
-    'held',
-  ]);
+  const allowedTypes = new Set(EVENT_TYPES);
   data.id = /^[a-zA-Z0-9-]{1,60}$/.test(data.id) ? data.id : 'shared-campaign';
   data.name = String(data.name || 'Shared campaign').slice(0, 60);
   data.winner =
     Number.isInteger(data.winner) && data.winner >= 0 && data.winner < 10 ? data.winner : null;
   data.difficulty = difficultyFor(data.difficulty).id;
+  // Old shared URLs are standalone records: bound their history and rebuild known safe fields.
   data.events = data.events.slice(-60).map((event, i) => ({
     id: `shared-${i}`,
     type: allowedTypes.has(event?.type) ? event.type : 'campaign',
@@ -143,8 +140,5 @@ export function decodeSnapshot(text) {
         board: data.countries.map((c) => ({ code: c.code, owner: c.owner, army: c.army })),
       },
     ];
-  return data;
+  return normalizeCampaignCountries(data);
 }
-
-const escapeBinary = (text) =>
-  Array.from(text, (ch) => '%' + ch.charCodeAt(0).toString(16).padStart(2, '0')).join('');

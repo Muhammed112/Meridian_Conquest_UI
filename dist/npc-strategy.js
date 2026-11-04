@@ -1,9 +1,11 @@
 // These plans spend only existing troops and the normal turn reinforcement budget.
 // They are pure so resuming an older saved game needs no strategy-state migration.
 import { difficultyFor } from './difficulty.js';
+import { conquestReward } from './data.js';
+import { allianceFor, betrayalReason } from './diplomacy.js';
 const holdings = (game, player) => game.countries.filter((country) => country.owner === player);
-const rewardFor = (country) => Math.max(2, Math.floor(country.value / 2));
 
+/** Estimate a reserve target using available troops and the chosen difficulty’s reserve ratio. */
 function defenceGoal(countries, extra = 0, level = difficultyFor()) {
   if (!countries.length) return 2;
   const average =
@@ -17,7 +19,12 @@ const battleConfidence = (attackers, defenders) =>
   1 /
   (1 + Math.exp((-1.7 * (attackers - defenders)) / Math.sqrt(Math.max(1, attackers + defenders))));
 
+/**
+ * Plan moves from the supplied board; difficulty changes decisions, never dice or troop
+ * budgets.
+ */
 export class NpcStrategy {
+  /** Reserve an offensive share, then distribute the remaining legal budget to weaker holdings. */
   static reinforcements(game, player) {
     const own = holdings(game, player),
       level = difficultyFor(game.difficulty);
@@ -41,10 +48,15 @@ export class NpcStrategy {
     const destinations = own.filter((country) => allocations[country.code] > 0);
     return {
       allocations,
-      reason: `Deploying ${game.budget} soldiers: ${destinations.map((country) => `${allocations[country.code]} to ${country.name}`).join(', ')}. Preparing the next offensive.`,
+      reason: /* prettier-ignore */ `Deploying ${game.budget} soldiers: ${
+        destinations
+          .map((country) => `${allocations[country.code]} to ${country.name}`)
+          .join(', ')
+      }. Preparing the next offensive.`,
     };
   }
 
+  /** Balance reserves on a copy before concentrating excess troops in one attacking country. */
   static defenceTransfers(game, player) {
     const own = holdings(game, player).map((country) => ({ ...country }));
     const goal = defenceGoal(own, 0, difficultyFor(game.difficulty)),
@@ -86,13 +98,19 @@ export class NpcStrategy {
     return moves;
   }
 
+  /** Rank legal targets using force, reward, elimination and recent territorial changes. */
   static attack(game, player) {
+    const pact = allianceFor(game, player);
+    const betrayal = pact && betrayalReason(game, player, pact.ally);
     const own = holdings(game, player),
-      enemy = game.countries.filter((country) => country.owner !== player);
+      enemy = game.countries.filter(
+        (country) => country.owner !== player && (!pact || country.owner !== pact.ally || betrayal),
+      );
     const level = difficultyFor(game.difficulty),
       ownCount = own.length,
       goal = defenceGoal(own, 0, level);
     const ownArmy = own.reduce((sum, country) => sum + country.army, 0);
+    // Recent recaptures reduce target appeal so bots are less likely to trade one country forever.
     const trades = new Map();
     for (const event of game.events || []) {
       if (event.type !== 'conquest' || game.round - event.round < 0 || game.round - event.round > 2)
@@ -104,7 +122,7 @@ export class NpcStrategy {
     for (const from of own) {
       for (const to of enemy) {
         const available = from.army - 1,
-          reward = rewardFor(to);
+          reward = conquestReward(to.value);
         // Dice remain fair. This is a planning estimate, not an altered outcome.
         const expectedCombined = from.army - to.army + reward;
         const rival = holdings(game, to.owner),
@@ -142,6 +160,12 @@ export class NpcStrategy {
             )
           : 0;
         const playerPressure = player !== 0 && to.owner === 0 ? level.playerPressure : 0;
+        // Cooperation redirects normal attacks toward a leader threatening both allies.
+        const commonThreat =
+          pact &&
+          to.owner !== pact.ally &&
+          rival.length > Math.max(ownCount, holdings(game, pact.ally).length);
+        // Reward useful expansion while accounting for counterattacks and difficulty preferences.
         const score =
           4 +
           reward * 1.2 -
@@ -151,6 +175,7 @@ export class NpcStrategy {
           Math.max(0, rival.length - ownCount) * level.leaderWeight +
           armyThreat * level.threatWeight +
           followUps * level.momentumWeight +
+          (commonThreat ? level.leaderWeight : 0) +
           playerPressure -
           Math.min(3, recentTrades) * level.churnPenalty -
           counterRisk * level.counterWeight;
@@ -164,15 +189,22 @@ export class NpcStrategy {
             from,
             to,
             score,
-            reason: `Attack ${to.name} to ${objective}: ${available} attackers against ${to.army} defenders.`,
+            reason:
+              (pact?.ally === to.owner ? `Breaking the pact: ${betrayal} ` : '') +
+              `Attack ${to.name} to ${objective}: ${available} attackers against ${to.army} defenders.`,
           };
         }
       }
     }
     if (best) return best;
-    return { reason: 'Holding this turn: more soldiers are needed to challenge an enemy army.' };
+    return {
+      reason: pact
+        ? 'Holding this turn: respecting the pact; no suitable rival attack is available.'
+        : 'Holding this turn: more soldiers are needed to challenge an enemy army.',
+    };
   }
 
+  /** Stop stalemates or overly risky attacks without altering any recorded battle outcome. */
   static battleDecision(game, { phaseLimit = 20 } = {}) {
     const battle = game.battle;
     if (!battle) return { continue: false, reason: 'No attack is in progress.' };
@@ -181,7 +213,9 @@ export class NpcStrategy {
     if (battle.phase >= phaseLimit)
       return {
         continue: false,
-        reason: `Stopping the attack on ${to.name} after ${battle.phase} phases without a decisive result; regrouping for the next turn.`,
+        reason: /* prettier-ignore */ `Stopping the attack on ${to.name} after ${
+          battle.phase
+        } phases without a decisive result; regrouping for the next turn.`,
       };
     const level = difficultyFor(game.difficulty),
       eliminates = holdings(game, to.owner).length === 1;
@@ -193,7 +227,11 @@ export class NpcStrategy {
     return {
       continue: viable,
       reason: viable
-        ? `Continuing the attack on ${to.name}: ${forces}; ${eliminates ? 'taking this last country would eliminate a rival' : 'the remaining force can still challenge this defence'}.`
+        ? /* prettier-ignore */ `Continuing the attack on ${to.name}: ${forces}; ${
+          eliminates
+            ? 'taking this last country would eliminate a rival'
+            : 'the remaining force can still challenge this defence'
+        }.`
         : `Stopping the attack on ${to.name}: ${forces}; the risk is too high to keep pressing.`,
     };
   }

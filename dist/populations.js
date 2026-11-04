@@ -3,6 +3,10 @@ import { validatePopulationSnapshot, validatePopulationUpdate } from './populati
 
 export const POPULATION_CACHE_KEY = 'meridian-populations-v2';
 const day = 86400000;
+/**
+ * Refresh reference data independently of gameplay, retaining validated offline/cache
+ * fallbacks.
+ */
 export function createPopulationStore({
   catalogue,
   reference,
@@ -17,6 +21,7 @@ export function createPopulationStore({
     retryAfter = 0,
     pending = null,
     state = 'saved';
+  // Refresh the shared reference catalogue only; existing campaigns own copied population values.
   const apply = (snapshot) => {
     current = snapshot;
     for (const country of catalogue)
@@ -38,6 +43,7 @@ export function createPopulationStore({
     // Optional storage or browser capability is unavailable; retain the fallback.
   }
   apply(current);
+  /** Coalesce concurrent refreshes and enforce daily checks, timeouts and a failure cooldown. */
   async function refresh() {
     if (pending) return pending;
     if (!fetchSnapshot || now() < retryAfter || (lastCheck && now() - lastCheck < day))
@@ -75,6 +81,7 @@ export function createPopulationStore({
         return true;
       } catch {
         state = 'unavailable';
+        // Keep the last valid data playable and avoid retrying a failing source every rerender.
         retryAfter = now() + 3600000;
         onChange({ changed: false, state });
         return false;
@@ -98,9 +105,12 @@ export function createPopulationStore({
     },
   };
 }
+/** Read the public population document without sending player credentials. */
 export function populationFetcher(config, fetcher = fetch) {
   if (!config?.projectId) return null;
-  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/(default)/documents/publicData/populations`;
+  const url = /* prettier-ignore */ `https://firestore.googleapis.com/v1/projects/${
+    encodeURIComponent(config.projectId)
+  }/databases/(default)/documents/publicData/populations`;
   return async (signal) => {
     const response = await fetcher(url, { signal, cache: 'no-store', credentials: 'omit' });
     if (!response.ok) throw new Error('Population snapshot is unavailable.');
@@ -111,6 +121,7 @@ export function populationFetcher(config, fetcher = fetch) {
     return JSON.parse(payload);
   };
 }
+/** Read the loopback development server’s validated population cache. */
 export function localPopulationFetcher(fetcher = fetch) {
   return async (signal) => {
     const response = await fetcher('/population-data.json', {

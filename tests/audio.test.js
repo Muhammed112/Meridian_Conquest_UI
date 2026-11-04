@@ -10,6 +10,8 @@ import {
 import { GameEngine } from '../dist/engine.js';
 import { MotionDirector, DICE_ROLL_DURATION } from '../dist/motion.js';
 
+// Audio preferences must survive reload without risking campaign data or requiring writable
+// storage.
 test('mute and volumes survive reload separately from campaign saves, including blocked storage', () => {
   const values = new Map([['meridian-conquest-ui-v2', 'keep campaign']]);
   const storage = {
@@ -45,21 +47,28 @@ test('mute and volumes survive reload separately from campaign saves, including 
   );
 });
 
-test('opening saves is silent and redraws never repeat an event, while replay plays only its selected step', () => {
-  const game = GameEngine.create('Audio test', 'ZA', true),
-    engine = new GameEngine(game),
-    cursor = new SoundEventCursor();
-  assert.deepEqual(cursor.read(game), []);
-  engine.reinforce({ [engine.owned()[0].code]: game.budget });
-  const event = game.events.at(-1);
-  assert.deepEqual(cursor.read(game), [event]);
-  assert.deepEqual(cursor.read(game), []);
-  assert.deepEqual(cursor.read(game, { view: 'history', replay: 0 }), []);
-  assert.deepEqual(cursor.read(game, { view: 'history', replay: 1 }), [game.events[1]]);
-  assert.deepEqual(cursor.read(game, { view: 'history', replay: 1 }), []);
-  assert.deepEqual(cursor.read(game, { view: 'game' }), []);
-});
+// Resuming a game must not replay old sounds, and scrubbing replay must emit only the chosen event.
+test(
+  'opening saves is silent and redraws never repeat an event, while replay' +
+    ' plays only its selected step',
+  () => {
+    const game = GameEngine.create('Audio test', 'ZA', true),
+      engine = new GameEngine(game),
+      cursor = new SoundEventCursor();
+    assert.deepEqual(cursor.read(game), []);
+    engine.reinforce({ [engine.owned()[0].code]: game.budget });
+    const event = game.events.at(-1);
+    assert.deepEqual(cursor.read(game), [event]);
+    assert.deepEqual(cursor.read(game), []);
+    assert.deepEqual(cursor.read(game, { view: 'history', replay: 0 }), []);
+    assert.deepEqual(cursor.read(game, { view: 'history', replay: 1 }), [game.events[1]]);
+    assert.deepEqual(cursor.read(game, { view: 'history', replay: 1 }), []);
+    assert.deepEqual(cursor.read(game, { view: 'game' }), []);
+  },
+);
 
+// Unmuting must resume current action rather than replay sounds accumulated while the player was
+// muted.
 test('muted events are consumed without an audio backlog or campaign mutation', () => {
   const sound = new SoundDirector({ storage: null }),
     game = GameEngine.create('Silent battle', 'ZA', true),
@@ -77,6 +86,8 @@ test('muted events are consumed without an audio backlog or campaign mutation', 
   assert.equal(JSON.stringify(game), before);
 });
 
+// Combat sounds must reveal casualties at the same moment as the dice, with no false impact on a
+// tie.
 test('one impact per dice phase shares the casualty clock and ties produce no casualty sound', () => {
   for (const fast of [false, true]) {
     const game = GameEngine.create('Sound timing', 'ZA', true),
@@ -103,6 +114,8 @@ test('one impact per dice phase shares the casualty clock and ties produce no ca
   );
 });
 
+// Background tabs and mute must stop queued and active audio instead of surprising the player
+// later.
 test('hiding the tab or muting cancels pending cues and stops active voices', async () => {
   const sound = new SoundDirector({ storage: null });
   let fired = false,
@@ -118,6 +131,7 @@ test('hiding the tab or muting cancels pending cues and stops active voices', as
   sound.setHidden(true);
   assert.equal(sound.pending.size, 0);
   assert.equal(stopped, 1);
+  // Wait beyond the scheduled cue to prove cancellation rather than only inspect timer bookkeeping.
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(fired, false);
   sound.later(() => {
@@ -128,43 +142,50 @@ test('hiding the tab or muting cancels pending cues and stops active voices', as
   assert.equal(fired, false);
 });
 
-test('entering a campaign changes the menu theme and leaving or ending a battle restores the right theme', () => {
-  const sound = new SoundDirector({ storage: null }),
-    game = GameEngine.create('Music transitions', 'ZA', true),
-    engine = new GameEngine(game);
-  const scenes = [];
-  sound.syncMusic = () => scenes.push(sound.scene);
-  try {
-    sound.observe(null, { view: 'welcome' });
-    assert.equal(sound.scene, 'menu');
-    sound.observe(game, { view: 'campaigns' });
-    assert.equal(sound.scene, 'menu');
-    sound.observe(game, { view: 'game' });
-    assert.equal(sound.scene, 'planning');
-    engine.reinforce({ [engine.owned()[0].code]: game.budget });
-    engine.startAttack(engine.owned()[0].code, game.countries.find((c) => c.owner !== 0).code);
-    sound.observe(game, { view: 'game' });
-    assert.equal(sound.scene, 'battle');
-    sound.observe(game, { view: 'campaigns' });
-    assert.equal(sound.scene, 'menu');
-    sound.observe(game, { view: 'setup' });
-    assert.equal(sound.scene, 'menu');
-    sound.observe(game, { view: 'game' });
-    assert.equal(sound.scene, 'battle', 'resuming a live battle uses its own track');
-    engine.stopAttack();
-    sound.observe(game, { view: 'game' });
-    assert.equal(sound.scene, 'planning');
-    sound.observe(game, { view: 'history', replay: 0 });
-    assert.equal(sound.scene, 'planning');
-    sound.observe(null, { view: 'welcome' });
-    assert.equal(sound.scene, 'menu');
-    assert.deepEqual(scenes, ['planning', 'battle', 'menu', 'battle', 'planning', 'menu']);
-  } finally {
-    clearTimeout(sound.sceneTimer);
-    sound.cancelEffects();
-  }
-});
+// Navigation must select the appropriate soundtrack even when returning to an unfinished battle.
+test(
+  'entering a campaign changes the menu theme and leaving or ending a battle' +
+    ' restores the right theme',
+  () => {
+    const sound = new SoundDirector({ storage: null }),
+      game = GameEngine.create('Music transitions', 'ZA', true),
+      engine = new GameEngine(game);
+    const scenes = [];
+    sound.syncMusic = () => scenes.push(sound.scene);
+    try {
+      sound.observe(null, { view: 'welcome' });
+      assert.equal(sound.scene, 'menu');
+      sound.observe(game, { view: 'campaigns' });
+      assert.equal(sound.scene, 'menu');
+      sound.observe(game, { view: 'game' });
+      assert.equal(sound.scene, 'planning');
+      engine.reinforce({ [engine.owned()[0].code]: game.budget });
+      engine.startAttack(engine.owned()[0].code, game.countries.find((c) => c.owner !== 0).code);
+      sound.observe(game, { view: 'game' });
+      assert.equal(sound.scene, 'battle');
+      sound.observe(game, { view: 'campaigns' });
+      assert.equal(sound.scene, 'menu');
+      sound.observe(game, { view: 'setup' });
+      assert.equal(sound.scene, 'menu');
+      sound.observe(game, { view: 'game' });
+      assert.equal(sound.scene, 'battle', 'resuming a live battle uses its own track');
+      engine.stopAttack();
+      sound.observe(game, { view: 'game' });
+      assert.equal(sound.scene, 'planning');
+      sound.observe(game, { view: 'history', replay: 0 });
+      assert.equal(sound.scene, 'planning');
+      sound.observe(null, { view: 'welcome' });
+      assert.equal(sound.scene, 'menu');
+      assert.deepEqual(scenes, ['planning', 'battle', 'menu', 'battle', 'planning', 'menu']);
+    } finally {
+      clearTimeout(sound.sceneTimer);
+      sound.cancelEffects();
+    }
+  },
+);
 
+// Preloading should remove startup delay while respecting the browser's user-gesture playback
+// requirement.
 test('music buffers on page load without starting playback or creating an audio context', () => {
   const previousAudio = globalThis.Audio,
     previousDocument = globalThis.document,
@@ -206,12 +227,14 @@ test('music buffers on page load without starting playback or creating an audio 
     sound.prepareMusic();
     assert.equal(elements.length, 3, 'preparing again reuses existing buffers');
   } finally {
+    // Restore browser globals so later tests cannot inherit this fake media environment.
     globalThis.Audio = previousAudio;
     globalThis.document = previousDocument;
     globalThis.AudioContext = previousContext;
   }
 });
 
+/** Hold media readiness explicitly so crossfade races never depend on a real download. */
 function pendingMusic() {
   const sound = new SoundDirector({ storage: null });
   let beginPlanning;
@@ -255,6 +278,8 @@ function pendingMusic() {
   };
 }
 
+// Slow loading must not create a silent gap between tracks or leave the old theme playing
+// afterward.
 test('the outgoing music stays audible until the incoming track is ready, then fades quickly', async () => {
   const { sound, ready } = pendingMusic();
   try {
@@ -278,6 +303,7 @@ test('the outgoing music stays audible until the incoming track is ready, then f
   }
 });
 
+// A late media promise must not override a mute choice made while the track was still loading.
 test('a track finishing its load after mute cannot restart the soundtrack', async () => {
   const { sound, ready } = pendingMusic();
   sound.syncMusic();

@@ -1,3 +1,4 @@
+/* Real radio inputs retain keyboard selection and form semantics inside the styled cards. */
 .difficulty-picker {
   border: 0;
   padding: 0;
@@ -100,6 +101,7 @@
     padding: 2px 5px;
   }
 }
+/* Keep difficulty selection usable without decorative transitions. */
 @media (prefers-reduced-motion: reduce) {
   html:not([data-motion='full']) .difficulty-option {
     transition: none;

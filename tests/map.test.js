@@ -5,6 +5,7 @@ import { catalogue } from '../dist/data.js';
 import { legacyCountries } from '../dist/legacy-countries.js';
 import { countryPoint } from '../dist/motion.js';
 
+/** Expand SVG path commands into edges so seam regressions need no raster screenshot comparison. */
 function segments(d) {
   const result = [];
   let previous = null,
@@ -23,6 +24,8 @@ function segments(d) {
   return result;
 }
 
+// Antimeridian rings must not reconnect across the visible map as the thick horizontal lines
+// reported earlier.
 test('country outlines never join opposite map edges through the visible interior', () => {
   for (const country of worldPaths) {
     for (const [a, b] of segments(country.d)) {
@@ -33,23 +36,29 @@ test('country outlines never join opposite map edges through the visible interio
   }
 });
 
-test('map retains original outlines, gives every country a visible marker, and separates the map seams', () => {
-  const identified = worldPaths.filter((c) => c.id && c.id !== 'null');
-  assert.equal(new Set(identified.map((c) => c.id)).size, identified.length);
-  for (const country of legacyCountries)
-    assert.ok(
-      worldPaths.some((p) => p.id === country.id),
-      country.name,
-    );
-  for (const country of catalogue) {
-    const [x, y] = countryPoint(country);
-    assert.ok(
-      Number.isFinite(x) && x >= 0 && x <= 960 && Number.isFinite(y) && y >= 0 && y <= 480,
-      'Missing visible marker for ' + country.name,
-    );
-  }
-  for (const id of ['242', '643']) {
-    const shape = worldPaths.find((country) => country.id === id);
-    assert.ok(shape.d.match(/M/g).length > 1, 'Seam-crossing geometry needs separate rings');
-  }
-});
+// Catalogue expansion must retain original geography while giving every country finite on-map
+// coordinates.
+test(
+  'map retains original outlines, gives every country a visible marker, and' +
+    ' separates the map seams',
+  () => {
+    const identified = worldPaths.filter((c) => c.id && c.id !== 'null');
+    assert.equal(new Set(identified.map((c) => c.id)).size, identified.length);
+    for (const country of legacyCountries)
+      assert.ok(
+        worldPaths.some((p) => p.id === country.id),
+        country.name,
+      );
+    for (const country of catalogue) {
+      const [x, y] = countryPoint(country);
+      assert.ok(
+        Number.isFinite(x) && x >= 0 && x <= 960 && Number.isFinite(y) && y >= 0 && y <= 480,
+        'Missing visible marker for ' + country.name,
+      );
+    }
+    for (const id of ['242', '643']) {
+      const shape = worldPaths.find((country) => country.id === id);
+      assert.ok(shape.d.match(/M/g).length > 1, 'Seam-crossing geometry needs separate rings');
+    }
+  },
+);

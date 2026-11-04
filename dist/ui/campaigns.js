@@ -1,21 +1,38 @@
-import { renderIcon, renderButton, renderDifficultyBadge } from './components.js';
+import {
+  renderIcon,
+  renderButton,
+  renderCountryFlag,
+  renderDifficultyBadge,
+} from './components.js';
 import { escapeHTML } from '../html.js';
 import { findCountry, catalogue, armyValue, colours, commanders } from '../data.js';
 import { cloudEnabled } from '../cloud.js?v=match-commentary-20261026-1';
 import { difficultyOptions } from '../difficulty.js';
 import { GameEngine } from '../engine.js';
 
+/** Compose welcome, campaign catalogue, setup and authentication views from current context. */
 export function createCampaignViews(context) {
+  let welcomeIntroStartedAt = null;
+
+  /** Render the landing page; its animated preview stays outside saved campaigns. */
   function welcome() {
     const { nav, theatre, footer } = context;
+    const now = performance.now();
+    welcomeIntroStartedAt ??= now;
+    // Resume the same entrance after account/settings redraws instead of replaying it.
+    const introElapsed = Math.min(now - welcomeIntroStartedAt, 1200);
 
     return /* HTML */ `<div class="shell"
-      >${nav()}<main
+      >${nav('welcome')}<main
         ><section class="hero"
-          ><div class="hero-copy"
+          ><div
+            class="hero-copy ${introElapsed < 1200 ? 'briefing-reveal' : ''}"
+            style="--briefing-elapsed:${introElapsed}ms"
             ><div class="eyebrow">A world of strategy. One commander.</div
             ><h1
-              >Choose your nation.<br />Build your army.<br /><span class="outline-word"
+              ><span class="briefing-line">Choose your nation.</span
+              ><span class="briefing-line">Build your army.</span
+              ><span class="briefing-line outline-word"
                 >Conquer the world.</span
               ></h1
             ><p
@@ -32,7 +49,7 @@ export function createCampaignViews(context) {
               ><span>${renderIcon('eye')} Watch the action</span></div
             ></div
           ><div
-            >${theatre()}<div class="map-callout"
+            >${theatre(undefined, { demo: true })}<div class="map-callout"
               >${renderIcon('globe')}<div
                 >Every country is within reach.<br /><span class="caption"
                   >Your strategy sets the boundaries.</span
@@ -61,16 +78,27 @@ export function createCampaignViews(context) {
     >`;
   }
 
+  /** Summarize one saved campaign and expose its resume, replay and sharing actions. */
   function gameCard(game, index) {
-    const { owned, map } = context;
+    const { owned, map, liveShares } = context;
 
     const troops = owned(game).reduce((n, c) => n + c.army, 0),
       start = findCountry(game.start);
-    return /* HTML */ `<article class="campaign-card"
+    return /* prettier-ignore */ `<article class="campaign-card"
       ><div class="campaign-art"
         >${map(game.countries, { mini: true })}<span
           class="badge ${game.status === 'won' ? 'gold' : 'live'}"
-          >${game.status === 'won' ? 'World conquered' : game.status === 'lost' ? 'Viewing only' : game.battle ? 'Battle in progress' : game.order[game.position] === 0 ? 'Your move' : 'Opponent turn'}</span
+          >${
+            game.status === 'won'
+                ? 'World conquered'
+                : game.status === 'lost'
+                  ? 'Viewing only'
+                  : game.battle
+                    ? 'Battle in progress'
+                    : game.order[game.position] === 0
+                      ? 'Your move'
+                      : 'Opponent turn'
+          }</span
         ></div
       ><div class="campaign-card-body"
         ><div class="campaign-title-row"
@@ -97,14 +125,21 @@ export function createCampaignViews(context) {
             class="icon-button"
             data-action="share"
             data-id="${game.id}"
-            aria-label="Copy viewing-only snapshot link"
+            aria-label="Share viewing-only game link"
             >${renderIcon('copy')}</button
-          ></div
+          >${
+            liveShares?.isShared(game.id)
+              ? /* prettier-ignore */ `<button class="btn btn-sm" data-action="stop-sharing" data-id="${
+                        escapeHTML(game.id)
+                      }">Stop sharing</button>`
+              : ''
+          }</div
         ></div
       ></article
     >`;
   }
 
+  /** Apply status and text filters without mutating the campaign collection. */
   function filteredGames() {
     const { games, state } = context;
 
@@ -118,32 +153,48 @@ export function createCampaignViews(context) {
     );
   }
 
+  /** Distinguish loading/failure from an empty account so saves do not appear deleted. */
   function campaignLoadNotice() {
     const { campaignLoadState, campaignLoadError } = context;
 
     if (!cloudEnabled) return '';
     if (campaignLoadState === 'loading')
       return '<div class="notice" role="status">Loading your saved campaigns and history...</div>';
-    if (campaignLoadState === 'error')
+    if (campaignLoadState === 'error' || campaignLoadState === 'partial')
       return /* HTML */ `<div class="notice" role="alert"
         ><span
-          ><strong>Your campaigns could not finish loading.</strong>
+          ><strong>${
+            campaignLoadState === 'partial'
+              ? 'Some campaigns need attention.'
+              : 'Your campaigns could not finish loading.'
+          }</strong>
           ${escapeHTML(campaignLoadError)} Your saved data has been kept.</span
         >${renderButton('Retry loading', 'retry-campaigns', 'btn-sm')}</div
       >`;
     return '';
   }
 
+  /** Render matching cards or the appropriate signed-out, loading or empty state. */
   function campaignResults() {
     const { campaignLoadState, cloud, games } = context;
 
     const list = filteredGames();
     if (list.length) return list.map(gameCard).join('');
     if (cloudEnabled && campaignLoadState === 'loading')
-      return '<div class="empty-state" style="grid-column:1/-1" role="status"><h2>Loading your campaigns...</h2><p>Your saved campaigns will appear here.</p></div>';
-    if (cloudEnabled && campaignLoadState === 'error') return '';
+      return (
+        '<div class="empty-state" style="grid-column:1/-1" role="status">' +
+        '<h2>Loading your campaigns...</h2>' +
+        '<p>Your saved campaigns will appear here.</p></div>'
+      );
+    if (cloudEnabled && ['error', 'partial'].includes(campaignLoadState)) return '';
     if (cloudEnabled && !cloud?.user)
-      return '<div class="empty-state" style="grid-column:1/-1"><h2>Sign in to see your campaigns.</h2><p>Your saves are linked to the account you played with.</p><a href="#signin" class="btn btn-primary">Sign in</a></div>';
+      return (
+        '<div class="empty-state" style="grid-column:1/-1">' +
+        '<h2>Sign in to see your campaigns.</h2>' +
+        '<p>Your saves are linked to the account you played with.</p>' +
+        '<a href="#signin" class="btn btn-primary">Sign in</a></div>'
+      );
+    // An empty filtered result is different from an account with no saved campaigns.
     if (games.length)
       return /* HTML */ `<div class="empty-state" style="grid-column:1/-1"
         ><h2>No campaigns match your filters.</h2
@@ -159,10 +210,11 @@ export function createCampaignViews(context) {
     >`;
   }
 
+  /** Compose the campaign list and controls using the current account’s visible saves. */
   function dashboard() {
     const { nav, state, cloud, profile, footer } = context;
 
-    return /* HTML */ `<div class="shell"
+    return /* prettier-ignore */ `<div class="shell"
       >${nav('campaigns')}<main
         ><div class="page-heading"
           ><div
@@ -170,7 +222,8 @@ export function createCampaignViews(context) {
             ><p>Pick up where you left off, or set your sights on a new world.</p></div
           ><div class="campaign-heading-actions"
             ><a href="#setup" class="btn btn-primary">${renderIcon('plus')} New campaign</a
-            ><a href="#multiplayer" class="btn">${renderIcon('users')} Play with friends</a></div
+            ><a href="#multiplayer" class="btn">${renderIcon('users')} Play with friends</a
+            ><a href="#tutorial" class="btn btn-ghost">Interactive tutorial</a></div
           ></div
         ><div class="toolbar"
           ><div class="search-wrap"
@@ -182,23 +235,24 @@ export function createCampaignViews(context) {
               aria-label="Search campaigns"
               value="${escapeHTML(state.search)}" /></div
           ><div class="filters" aria-label="Campaign status"
-            >${[
-              ['all', 'All campaigns'],
-              ['active', 'Active'],
-              ['won', 'Won'],
-              ['lost', 'Lost'],
-            ]
-              .map(
-                ([v, t]) =>
-                  /* HTML */ `<button
+            >${
+              [
+                ['all', 'All campaigns'],
+                ['active', 'Active'],
+                ['won', 'Won'],
+                ['lost', 'Lost'],
+              ]
+                .map(
+                  ([v, t]) => /* HTML */ `<button
                     class="filter ${state.filter === v ? 'active' : ''}"
                     aria-pressed="${state.filter === v}"
                     data-action="filter"
                     data-filter="${v}"
                     >${t}</button
                   >`,
-              )
-              .join('')}</div
+                )
+                .join('')
+            }</div
           ></div
         ><div class="section-label"
           ><span>Your campaigns</span
@@ -207,7 +261,11 @@ export function createCampaignViews(context) {
           >${campaignResults()}</div
         ><div class="save-note"
           >${renderIcon('save')}
-          ${cloud?.user ? `Signed in as ${escapeHTML(cloud.user.email || profile?.name)}. Campaigns save to your account.` : 'Each campaign saves independently on this device, including any in-progress battle.'}</div
+          ${
+            cloud?.user
+              ? `Signed in as ${escapeHTML(cloud.user.email || profile?.name)}. Campaigns save to your account.`
+              : 'Each campaign saves independently on this device, including any in-progress battle.'
+          }</div
         ><div class="notice"
           >${renderIcon('info')}<span
             >Choose your country and difficulty to start a campaign.
@@ -218,6 +276,7 @@ export function createCampaignViews(context) {
     >`;
   }
 
+  /** Render searchable country choices from the validated reference catalogue. */
   function setupOptions() {
     const { state } = context;
 
@@ -225,13 +284,11 @@ export function createCampaignViews(context) {
       catalogue
         .filter((c) => c.name.toLowerCase().includes(state.setupSearch.toLowerCase()))
         .map(
-          (c) =>
-            /* HTML */ `<button
+          (c) => /* HTML */ `<button
               class="country-option ${state.setupStart === c.code ? 'selected' : ''}"
               data-action="setup-country"
               data-code="${c.code}"
-              ><span class="flag">${c.flag}</span
-              ><span class="country-option-name"
+              >${renderCountryFlag(c.code)}<span class="country-option-name"
                 >${c.name}<span class="country-owner"
                   >${Math.round(c.population * 1000000).toLocaleString()} people</span
                 ></span
@@ -243,6 +300,7 @@ export function createCampaignViews(context) {
     );
   }
 
+  /** Reuse the shared difficulty definitions for accessible radio-button choices. */
   function difficultyPicker() {
     const { state } = context;
 
@@ -251,8 +309,7 @@ export function createCampaignViews(context) {
       ><div class="difficulty-options"
         >${difficultyOptions
           .map(
-            (level) =>
-              /* HTML */ `<label
+            (level) => /* HTML */ `<label
                 class="difficulty-option ${state.setupDifficulty === level.id ? 'selected' : ''}"
                 ><input
                   type="radio"
@@ -274,9 +331,11 @@ export function createCampaignViews(context) {
     >`;
   }
 
+  /** Create an unsaved board preview once and retain it while editing campaign settings. */
   function setup() {
     const { state, profile, nav, populationStatus, nameOf, footer } = context;
 
+    // Preserve the drawn opponents and first player while text fields trigger fresh renders.
     if (!state.setupGame)
       state.setupGame = GameEngine.create(
         state.setupName,
@@ -287,7 +346,7 @@ export function createCampaignViews(context) {
       );
     const chosen = findCountry(state.setupStart),
       game = state.setupGame;
-    return /* HTML */ `<div class="shell"
+    return /* prettier-ignore */ `<div class="shell"
       >${nav('setup')}<main
         ><div class="page-heading"
           ><div
@@ -337,20 +396,60 @@ export function createCampaignViews(context) {
                     soldiers</strong
                   ><br />Initial army strength is determined by the population band.</span
                 ></div
-              ><div class="section-label"><span>Population → initial soldiers</span></div
+              ><div class="section-label"
+                ><span
+                  >Population → initial soldiers chosen by countries real life population
+                </span></div
               ><div class="population-bands"
-                >${['≤ 5m', '≤ 10m', '≤ 25m', '≤ 50m', '≤ 75m', '≤ 100m', '≤ 125m', '≤ 150m', '> 150m'].map((v, i) => /* HTML */ `<div class="population-band">${v} <b>${i + 1}</b></div>`).join('')}</div
+                >${
+                  [
+                    '≤ 5m',
+                    '≤ 10m',
+                    '≤ 25m',
+                    '≤ 50m',
+                    '≤ 75m',
+                    '≤ 100m',
+                    '≤ 125m',
+                    '≤ 150m',
+                    '> 150m',
+                  ]
+                    .map(
+                      (v, i) =>
+                        /* HTML */ `<div class="population-band">${v} <b>${i + 1}</b></div>`,
+                    )
+                    .join('')
+                }</div
               ></div
             ></section
           ><div
             ><section class="panel"
               ><div class="panel-title"
                 ><span>Your world is ready</span
-                >${renderButton(renderIcon('refresh'), 'redraw-roster', 'btn-ghost btn-sm', 'aria-label="Redraw random opponents"')}</div
+                >${
+                  renderButton(
+                    renderIcon('refresh'),
+                    'redraw-roster',
+                    'btn-ghost btn-sm',
+                    'aria-label="Redraw random opponents"',
+                  )
+                }</div
               ><div class="panel-body"
                 ><div class="caption">10 distinct countries / 9 rivals drawn</div
                 ><div class="roster-list"
-                  >${game.countries.map((c, i) => /* HTML */ `<div class="setup-roster-row"><span>${c.flag}</span><span>${c.name}</span><span class="who" style="color:${colours[i]}">P${i + 1} ${escapeHTML(game.playerNames?.[i] || commanders[i])}</span><span class="troop-number">${c.army}</span></div>`).join('')}</div
+                  >${
+                    game.countries
+                      .map(
+                        (c, i) =>
+                          /* prettier-ignore */ `<div class="setup-roster-row">${
+                                        renderCountryFlag(c.code)
+                                      }<span>${
+                                        c.name
+                                      }</span><span class="who" style="color:${colours[i]}">P${i + 1} ${
+                                        escapeHTML(game.playerNames?.[i] || commanders[i])
+                                      }</span><span class="troop-number">${c.army}</span></div>`,
+                      )
+                      .join('')
+                  }</div
                 ><div class="notice" style="margin-top:18px"
                   >${renderIcon('info')}<span
                     ><strong>${nameOf(game.order[0])} will take the first turn.</strong><br />The
@@ -359,7 +458,13 @@ export function createCampaignViews(context) {
                 ></div
               ><div class="setup-launch"
                 ><span class="small muted">Your next move awaits.</span
-                >${renderButton(`Start campaign ${renderIcon('arrow')}`, 'create-game', 'btn-primary')}</div
+                >${
+                  renderButton(
+                    `Start campaign ${renderIcon('arrow')}`,
+                    'create-game',
+                    'btn-primary',
+                  )
+                }</div
               ></section
             ><div class="notice setup-bottom"
               >${renderIcon('users')}<span
@@ -373,12 +478,13 @@ export function createCampaignViews(context) {
     >`;
   }
 
+  /** Render sign-in, signup or reset forms; the controller owns validation and submission. */
   function auth(kind) {
     const { nav, map, cloud, cloudReady, footer } = context;
 
     const signup = kind === 'signup',
       reset = kind === 'reset';
-    return /* HTML */ `<div class="shell"
+    return /* prettier-ignore */ `<div class="shell"
       >${nav()}<main class="auth-workspace"
         ><div class="auth-copy"
           ><div class="eyebrow">Strategy has a starting point</div
@@ -390,13 +496,39 @@ export function createCampaignViews(context) {
           ><div class="caption">10 countries / 9 strategic rivals / 1 commander</div></div
         ><section class="panel auth-box"
           ><div class="eyebrow"
-            >${signup ? 'Your first campaign awaits' : reset ? 'Recover your command' : 'Welcome back, commander'}</div
+            >${
+              signup
+                ? 'Your first campaign awaits'
+                : reset
+                  ? 'Recover your command'
+                  : 'Welcome back, commander'
+            }</div
           ><h2
-            >${signup ? 'Create your account.' : reset ? 'Reset your password.' : 'Take command again.'}</h2
+            >${
+              signup
+                ? 'Create your account.'
+                : reset
+                  ? 'Reset your password.'
+                  : 'Take command again.'
+            }</h2
           ><p
-            >${signup ? 'Choose a player nickname for campaigns and multiplayer.' : reset ? 'Request a password reset email.' : 'Your campaigns are waiting for their next chapter.'}</p
+            >${
+              signup
+                ? 'Choose a player nickname for campaigns and multiplayer.'
+                : reset
+                  ? 'Request a password reset email.'
+                  : 'Your campaigns are waiting for their next chapter.'
+            }</p
           ><form id="auth-form" data-kind="${kind}"
-            >${signup ? '<div class="field-group"><label class="field-label" for="display-name">Player nickname</label><input class="field" id="display-name" name="name" autocomplete="nickname" required minlength="2" maxlength="32" placeholder="Your player nickname"></div>' : ''}<div
+            >${
+              signup
+                ? '<div class="field-group">' +
+                  '<label class="field-label" for="display-name">Player nickname</label>' +
+                  '<input class="field" id="display-name" name="name" autocomplete="nickname"' +
+                  ' required minlength="2" maxlength="32" placeholder="Your player nickname">' +
+                  '</div>'
+                : ''
+            }<div
               class="field-group"
               ><label class="field-label" for="email">Email address</label
               ><input
@@ -407,7 +539,27 @@ export function createCampaignViews(context) {
                 autocomplete="email"
                 required
                 placeholder="commander@example.com" /></div
-            >${!reset ? /* HTML */ `<div class="field-group"><label class="field-label" for="password">Password ${!signup ? '<a href="#reset" class="gold">Forgot password?</a>' : ''}</label><input type="password" class="field" id="password" name="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" required placeholder="At least 8 characters" /></div>${signup ? '<div class="field-group"><label class="field-label" for="confirm-password">Confirm password</label><input type="password" class="field" id="confirm-password" name="confirm" autocomplete="new-password" minlength="8" required placeholder="Repeat your password"></div>' : ''}` : ''}<div
+            >${
+              !reset
+                ? /* prettier-ignore */ `<div class="field-group"><label class="field-label" for="password">Password ${
+                                !signup
+                                  ? '<a href="#reset" class="gold">Forgot password?</a>'
+                                  : ''
+                              }</label>` +
+                  `<input type="password" class="field" id="password" name="password"` +
+                  /* prettier-ignore */ ` autocomplete="${
+                                signup ? 'new-password' : 'current-password'
+                              }" minlength="8" required placeholder="At least 8 characters" /></div>${
+                                signup
+                                  ? '<div class="field-group">' +
+                                    '<label class="field-label" for="confirm-password">Confirm password</label>' +
+                                    '<input type="password" class="field" id="confirm-password" name="confirm"' +
+                                    ' autocomplete="new-password" minlength="8" required placeholder="Repeat' +
+                                    ' your password"></div>'
+                                  : ''
+                              }`
+                : ''
+            }<div
               class="form-error"
               id="form-error"
               role="alert"
@@ -420,9 +572,19 @@ export function createCampaignViews(context) {
               ${renderIcon('arrow')}</button
             ></form
           ><div class="auth-switch"
-            >${signup ? 'Already have an account? <a href="#signin">Sign in</a>' : reset ? '<a href="#signin">Return to sign in</a>' : 'New to Meridian? <a href="#signup">Create account</a>'}</div
+            >${
+              signup
+                ? 'Already have an account? <a href="#signin">Sign in</a>'
+                : reset
+                  ? '<a href="#signin">Return to sign in</a>'
+                  : 'New to Meridian? <a href="#signup">Create account</a>'
+            }</div
           ><div class="auth-note"
-            >${cloudEnabled ? 'Sign in securely with Firebase. Campaigns are saved to your account.' : 'Account preview: Firebase has not been connected yet. No credentials are sent.'}</div
+            >${
+              cloudEnabled
+                ? 'Sign in securely with Firebase. Campaigns are saved to your account.'
+                : 'Account preview: Firebase has not been connected yet. No credentials are sent.'
+            }</div
           ></section
         ></main
       >${footer()}</div

@@ -1,6 +1,7 @@
 // Audio is presentation only. It never calls the combat RNG or changes a save.
 export const AUDIO_STORAGE_KEY = 'meridian-audio-settings-v1';
 export const DEFAULT_AUDIO_SETTINGS = Object.freeze({ muted: false, music: 0.22, effects: 0.6 });
+/** Normalize optional persisted settings, clamping volume to the supported range. */
 export function audioSettings(value = {}) {
   const volume = (key) =>
     typeof value?.[key] === 'number' && Number.isFinite(value[key])
@@ -9,6 +10,7 @@ export function audioSettings(value = {}) {
   return { muted: value?.muted === true, music: volume('music'), effects: volume('effects') };
 }
 
+/** Map factual events to sound timings, placing result cues after the visual dice reveal. */
 export function soundCuesFor(event, { fast = false, rollDuration = 1100 } = {}) {
   const scale = fast ? 0.5 : 1;
   switch (event.type) {
@@ -54,6 +56,7 @@ export class SoundEventCursor {
   constructor() {
     this.reset();
   }
+  /** Return only newly observed events; loading a save must not replay its entire audio history. */
   read(game, { view = 'game', replay = 0, watch = false } = {}) {
     if (!game || !['game', 'history'].includes(view)) {
       this.reset();
@@ -100,6 +103,7 @@ const asset = (name) => {
   return url.href;
 };
 
+/** Manage optional audio resources, scene changes and cancellation independently of gameplay. */
 export class SoundDirector {
   constructor({ storage, onChange = () => {} } = {}) {
     if (storage === undefined) {
@@ -152,6 +156,7 @@ export class SoundDirector {
       element.load();
     }
   }
+  /** Apply normalized preferences immediately; persistence failure never prevents muting. */
   setSettings(patch) {
     this.settings = audioSettings({ ...this.settings, ...patch });
     try {
@@ -164,6 +169,7 @@ export class SoundDirector {
     this.syncMusic();
     this.onChange();
   }
+  /** Coalesce gesture-triggered initialization and resume a suspended audio context. */
   async unlock() {
     if (this.unlocked) {
       if (!this.hidden && this.context?.state === 'suspended') {
@@ -178,6 +184,7 @@ export class SoundDirector {
     });
     return this.unlocking;
   }
+  /** Create the audio graph once; unsupported or blocked audio leaves the game playable. */
   async startAudio() {
     try {
       const Context = globalThis.AudioContext || globalThis.webkitAudioContext;
@@ -225,6 +232,7 @@ export class SoundDirector {
       this.onChange();
     }
   }
+  /** Smoothly apply master/music/effect gains to avoid clicks when settings change. */
   applyVolumes() {
     if (!this.context || !this.master) return;
     const at = this.context.currentTime;
@@ -237,6 +245,7 @@ export class SoundDirector {
       node.gain.setTargetAtTime(value, at, 0.035);
     }
   }
+  /** Share one decoding promise per asset and allow a failed asset to be retried later. */
   async load(file) {
     if (!this.context) return null;
     if (!this.buffers.has(file))
@@ -255,6 +264,7 @@ export class SoundDirector {
       );
     return this.buffers.get(file);
   }
+  /** Check visibility, mute and browser playback state before scheduling an effect. */
   allowed() {
     return (
       this.unlocked &&
@@ -264,12 +274,13 @@ export class SoundDirector {
       this.context?.state === 'running'
     );
   }
+  /** Limit simultaneous effects and disconnect each source when playback ends. */
   trackVoice(source, gain) {
     if (this.voices.size >= 10) {
       try {
         source.stop();
       } catch {
-        // Optional storage or browser capability is unavailable; retain the fallback.
+        // A source may already have ended; releasing the remaining audio resources is still safe.
       }
       source.disconnect();
       gain?.disconnect();
@@ -283,6 +294,7 @@ export class SoundDirector {
     };
     return true;
   }
+  /** Play a decoded effect only if its request still belongs to the active audio generation. */
   async sample(name, { volume = 1, rate = 1, maxDuration = 0 } = {}) {
     if (!this.allowed()) return;
     const generation = this.generation,
@@ -304,6 +316,7 @@ export class SoundDirector {
     source.start();
     source.stop(at + duration);
   }
+  /** Track delayed cues so navigation, mute and backgrounding can cancel them. */
   later(callback, delay) {
     const timer = setTimeout(
       () => {
@@ -315,6 +328,7 @@ export class SoundDirector {
     this.pending.add(timer);
     return timer;
   }
+  /** Synthesize a short note with an envelope rather than loading another recording. */
   tone(
     frequency,
     { delay = 0, duration = 0.2, volume = 0.12, type = 'sine', end = frequency } = {},
@@ -336,6 +350,7 @@ export class SoundDirector {
     osc.start(at);
     osc.stop(at + duration + 0.02);
   }
+  /** Synthesize a filtered whoosh from the deterministic noise buffer. */
   missile(volume) {
     if (!this.allowed()) return;
     const ctx = this.context,
@@ -364,6 +379,7 @@ export class SoundDirector {
     source.start();
     source.stop(at + 0.5);
   }
+  /** Compose recorded and synthesized sounds for a semantic cue, throttling repeated clicks. */
   cue(name, { fast = false, duration = 1100 } = {}) {
     if (!this.allowed()) return;
     const volume = fast ? 0.55 : 1;
@@ -417,6 +433,7 @@ export class SoundDirector {
     if (['missile', 'impact', 'capture', 'victory'].includes(name))
       this.duckMusic(name === 'victory' ? 2400 : 700);
   }
+  /** Temporarily lower music beneath important effects, replacing any older restore timer. */
   duckMusic(duration) {
     if (!this.musicBus) return;
     clearTimeout(this.duckTimer);
@@ -425,6 +442,7 @@ export class SoundDirector {
     this.musicBus.gain.setTargetAtTime(this.settings.music * 0.55, at, 0.06);
     this.duckTimer = setTimeout(() => this.applyVolumes(), duration);
   }
+  /** Select the scene’s track while respecting mute, backgrounding and browser autoplay rules. */
   syncMusic() {
     if (!this.unlocked) return;
     const audible = !this.hidden && !this.settings.muted && this.settings.music > 0;
@@ -450,6 +468,7 @@ export class SoundDirector {
         .catch(() => {});
     else if (track.element.readyState >= 3) this.activateMusic(desired);
   }
+  /** Fade only once the desired track is actually playing, then pause outgoing recordings. */
   activateMusic(name) {
     const track = this.tracks[name];
     if (!this.unlocked || !track?.gain) return;
@@ -470,6 +489,10 @@ export class SoundDirector {
         }, 400);
     }
   }
+  /**
+   * Invalidate pending decodes and cancel scheduled/playing effects without changing game
+   * state.
+   */
   cancelEffects() {
     this.generation++;
     for (const timer of this.pending) clearTimeout(timer);
@@ -478,11 +501,12 @@ export class SoundDirector {
       try {
         source.stop();
       } catch {
-        // Optional storage or browser capability is unavailable; retain the fallback.
+        // A source may already have ended; releasing the remaining audio resources is still safe.
       }
     }
     this.voices.clear();
   }
+  /** Consume new facts and align sound cues with the current visual reveal timing. */
   observe(game, options = {}, frame = null) {
     const key = this.cursor.key,
       incoming = this.cursor.read(game, options);
@@ -492,11 +516,13 @@ export class SoundDirector {
       this.battleUntil = 0;
       this.hadCountries = game?.countries?.some((c) => c.owner === 0);
     }
+    // Scrubbing replay replaces queued cues from the previous event instead of overlapping them.
     if (options.view === 'history' && incoming.length) this.cancelEffects();
     const visualRoll = frame?.roll,
       rollDuration = frame?.reduced ? 0 : (visualRoll?.rollDuration ?? (options.fast ? 550 : 1100));
     const time = performance.now(),
       battle = incoming.some((event) => ['attack', 'dice'].includes(event.type));
+    // Briefly retain battle music after a phase so quick state changes do not thrash tracks.
     if (battle) this.battleUntil = time + 3000;
     this.baseScene = game && ['game', 'history'].includes(options.view) ? 'planning' : 'menu';
     if (this.baseScene === 'menu') this.battleUntil = 0;
@@ -541,6 +567,7 @@ export class SoundDirector {
       }
     }
   }
+  /** Stop effects and suspend hidden-tab audio; resume music after the browser permits it. */
   setHidden(hidden) {
     this.hidden = hidden;
     this.cancelEffects();

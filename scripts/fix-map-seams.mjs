@@ -31,6 +31,7 @@ const topology = JSON.parse(
   await readFile(new URL('../dist/assets/world.topo.json', import.meta.url), 'utf8'),
 );
 const countries = feature(topology, topology.objects.countries).features;
+// Only Fiji and Russia cross the seam; regenerating every outline would create unrelated map changes.
 const crossing = new Set(['242', '643']);
 const fixed = worldPaths.map((country) => {
   if (!crossing.has(country.id)) return country;

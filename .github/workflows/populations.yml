@@ -6,6 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
+  # Finish each publication so overlapping schedules cannot race to replace the reference.
   group: population-update
   cancel-in-progress: false
 jobs:
@@ -22,6 +23,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: node --test tests/populations.test.js
+      # Only the restricted reference-data account is available to this publishing step.
       - run: node scripts/update-populations.mjs --publish
         env:
           POPULATION_UPDATER_EMAIL: ${{ secrets.POPULATION_UPDATER_EMAIL }}

@@ -1,5 +1,6 @@
 import { difficultyFor } from '../difficulty.js';
 
+// Keep decorative paths in one trusted catalogue rather than inserting externally supplied SVG.
 const iconPaths = {
   settings:
     'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',
@@ -22,7 +23,8 @@ const iconPaths = {
   play: 'm7 4 13 8-13 8z',
   history: 'M3 4v6h6M4 9a9 9 0 1 1 0 7m8-10v6l4 2',
   users:
-    'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3m13-16a4 4 0 0 1 0 8m6 8v-3a4 4 0 0 0-3-4M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
+    'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3m13-16a4 4 0 0 1 0 8m6 8v-3a4 4 0' +
+    ' 0 0-3-4M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
   info: 'M12 11v6M12 7v.1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
   close: 'm6 6 12 12M6 18 18 6',
   refresh: 'M20 4v6h-6M4 20v-6h6M4 9a8 8 0 0 1 13-5m3 11a8 8 0 0 1-13 5',
@@ -33,16 +35,36 @@ const iconPaths = {
   mail: 'M3 5h18v14H3zm0 1 9 7 9-7',
 };
 
-export const renderIcon = (name) =>
-  /* HTML */ `<svg viewBox="0 0 24 24" aria-hidden="true">
+/** Render a decorative icon from the fixed path catalogue, with a safe default. */
+export const renderIcon = (name) => /* HTML */ `<svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="${iconPaths[name] || iconPaths.globe}" />
   </svg>`;
 
-export const renderButton = (text, action, variant = '', extra = '') =>
-  /* HTML */ `<button type="button" class="btn ${variant}" data-action="${action}" ${extra}
+/** Use local flag images so Windows and other platforms do not fall back to letter emoji. */
+export function renderCountryFlag(code) {
+  if (typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)) return '';
+  return /* HTML */ `<img
+    class="country-flag"
+    src="./assets/flags/${code.toLowerCase()}.svg"
+    alt=""
+    width="24"
+    height="18"
+    loading="lazy"
+    decoding="async"
+  />`;
+}
+
+/** Compose a button from trusted markup/attributes; callers must escape any user-provided text. */
+export const renderButton = (
+  text,
+  action,
+  variant = '',
+  extra = '',
+) => /* HTML */ `<button type="button" class="btn ${variant}" data-action="${action}" ${extra}
     >${text}</button
   >`;
 
+/** Resolve the shared difficulty definition instead of duplicating labels or colours in views. */
 export const renderDifficultyBadge = (id) => {
   const level = difficultyFor(id);
   return /* HTML */ `<span
@@ -52,8 +74,9 @@ export const renderDifficultyBadge = (id) => {
   >`;
 };
 
-export const renderBrand = () =>
-  /* HTML */ `<a href="#welcome" class="brand" aria-label="Meridian Conquest home"
+/** Render the shared home link and decorative compass asset. */
+export const renderBrand =
+  () => /* HTML */ `<a href="#welcome" class="brand" aria-label="Meridian Conquest home"
     ><img src="./assets/compass.svg" alt="" /><span class="brand-title"
       >MERIDIAN<span>CONQUEST</span></span
     ></a

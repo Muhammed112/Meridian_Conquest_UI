@@ -1,47 +1,53 @@
 import { chromium } from './lib/browser.mjs';
 // Local-only rendering checks; no Firebase account or saved campaign is changed.
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { startTestServer } from './lib/static-server.mjs';
 
-import path from 'node:path';
 import { GameEngine } from '../dist/engine.js';
 
-const root = path.resolve('dist');
 let browser;
-const server = createServer(async (req, res) => {
-  try {
-    const file = path.resolve(
-      root,
-      '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname),
+const server = await startTestServer();
+
+/** Assert the map fills its card while retaining the original projection proportions. */
+async function checkFullWidthMap(page, selector = '.game-theatre') {
+  const dimensions = await page.locator(selector).evaluate((theatre) => {
+    const map = theatre.querySelector('.world-map').getBoundingClientRect();
+    return { panelWidth: theatre.clientWidth, width: map.width, height: map.height };
+  });
+  assert.ok(Math.abs(dimensions.width - dimensions.panelWidth) < 1, 'Fill the map panel width');
+  assert.ok(Math.abs(dimensions.width / dimensions.height - 2) < 0.01, 'Preserve map proportions');
+  assert.equal(
+    await page
+      .locator(selector)
+      .locator('.theatre-head,.theatre-footer,.map-coordinate,.map-compass')
+      .count(),
+    0,
+    'The gameplay panel contains just the map',
+  );
+}
+
+/** Wait for dock layout and ensure reports cover neither the map nor its action controls. */
+async function checkPinnedMapLayout(page, selector = '.game-theatre') {
+  await page.waitForFunction((selector) => {
+    const theatre = document.querySelector(selector);
+    const map = theatre.getBoundingClientRect();
+    const reports = document.querySelector('[data-reports-panel]').getBoundingClientRect();
+    const actions = theatre.parentElement.querySelector('.board-actions')?.getBoundingClientRect();
+    return (
+      map.top >= 0 &&
+      map.bottom <= reports.top - 8 &&
+      (!actions || actions.bottom <= reports.top - 8)
     );
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    const target = file === root ? path.join(root, 'index.html') : file;
-    res.writeHead(200, {
-      'Content-Type':
-        {
-          '.js': 'text/javascript',
-          '.css': 'text/css',
-          '.html': 'text/html',
-          '.svg': 'image/svg+xml',
-          '.mp3': 'audio/mpeg',
-          '.ogg': 'audio/ogg',
-        }[path.extname(target)] || 'application/octet-stream',
-    });
-    res.end(await readFile(target));
-  } catch {
-    res.writeHead(404).end();
-  }
-});
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  }, selector);
+  await checkFullWidthMap(page, selector);
+}
+
 try {
   browser = await chromium.launch({
     headless: true,
   });
   // Fast forward is offered in the bot panel; bot timing is checked below.
+  // Force a final conquest to prove already-computed ownership and victory stay hidden while dice roll.
   for (const mode of ['normal', 'reduced']) {
     const game = GameEngine.create('Battle reveal check', 'ZA', true);
     game.round = 1;
@@ -70,6 +76,11 @@ try {
       route.fulfill({ contentType: 'text/javascript', body: 'export const firebaseConfig=null;' }),
     );
     await page.goto('http://localhost:' + server.address().port + '/#game/' + game.id);
+    // A lone enemy follows the larger owner group until its capture is visibly revealed.
+    assert.equal(
+      await page.locator('.country-row').last().getAttribute('data-code'),
+      game.countries[1].code,
+    );
     await page.locator('#attack-from').selectOption('ZA');
     await page.locator('[data-action="start-attack"]').click();
     await page.evaluate(async () => {
@@ -104,6 +115,11 @@ try {
       );
     }
     if (mode !== 'reduced') {
+      assert.equal(
+        await page.locator('.country-row').last().getAttribute('data-code'),
+        game.countries[1].code,
+        'Roster grouping must not reveal a capture while the dice are rolling.',
+      );
       assert.equal(await page.locator('.result-title').count(), 0);
       assert.match(
         await page.locator('.action-panel').innerText(),
@@ -134,6 +150,22 @@ try {
       await page.locator('[data-map-country="ZA"].country-row .army-count').innerText(),
       '9',
     );
+    assert.deepEqual(
+      await page.locator('.country-row').evaluateAll((rows) => rows.map((row) => row.dataset.code)),
+      game.countries.map((country) => country.code),
+      'The captured row rejoins its new owner group after the result appears.',
+    );
+    // A capture flash must return to the neutral row background after regrouping.
+    await page.mouse.move(0, 0);
+    await page.clock.runFor(1000);
+    assert.equal(
+      await page.locator(`.country-row[data-code="${game.countries[1].code}"]`).evaluate((row) => {
+        // CSS animations use the document clock, separately from the simulated JS clock.
+        row.getAnimations().forEach((animation) => animation.finish());
+        return getComputedStyle(row).backgroundColor;
+      }),
+      'rgba(0, 0, 0, 0)',
+    );
     assert.deepEqual(errors, []);
     console.log(
       'PASS: ' +
@@ -142,6 +174,7 @@ try {
     );
     await page.close();
   }
+  // Script losses, ties and conquest so every playback speed must reveal the same factual summaries.
   for (const mode of ['normal', 'fast', 'reduced']) {
     const game = GameEngine.create('Bot phase summaries', 'ZA', true);
     game.round = 1;
@@ -202,7 +235,29 @@ try {
     await page.locator('[data-action="end-turn"]').first().dispatchEvent('click');
     if (mode === 'fast') await page.locator('.action-panel [data-action="fast"]').click();
     // The first bot pause starts before its speed control becomes available.
-    await page.clock.runFor(mode === 'fast' ? 3335 : 5000);
+    assert.match(await page.locator('.action-panel').innerText(), /Bot battle display fixture/);
+    await page.clock.runFor(4999);
+    assert.equal(await page.evaluate(() => window.botRollTimes.length), 0);
+    assert.equal(
+      await page.evaluate(
+        () => JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0].battle,
+      ),
+      null,
+    );
+    await page.clock.runFor(1);
+    await page.clock.runFor(mode === 'fast' ? 833 : 2500);
+    const decisionDelay = mode === 'fast' ? 1667 : 5000;
+    /** Prove a reading pause leaves armies untouched until its final millisecond. */
+    async function finishDecision(expectedRolls) {
+      assert.match(await page.locator('.action-panel').innerText(), /Continue the recorded attack/);
+      const armies = await page.locator('.country-roster').innerText();
+      await page.clock.runFor(decisionDelay - 1);
+      assert.equal(await page.evaluate(() => window.botRollTimes.length), expectedRolls);
+      assert.equal(await page.locator('.country-roster').innerText(), armies);
+      await page.clock.runFor(1);
+      assert.equal(await page.evaluate(() => window.botRollTimes.length), expectedRolls + 1);
+    }
+    await finishDecision(0);
     for (const [index, losses] of [
       [1, [1, 2]],
       [2, [2, 1]],
@@ -220,7 +275,9 @@ try {
         assert.doesNotMatch(await page.locator('.action-panel').innerText(), /Phase \d+:/);
         await page.clock.runFor(20);
       }
-      const expected = `Phase ${index}: ${game.countries[1].name} lost ${losses[0]}; ${game.countries[2].name} lost ${losses[1]}.`;
+      const expected = /* prettier-ignore */ `Phase ${index}: ${game.countries[1].name} lost ${losses[0]}; ${
+        game.countries[2].name
+      } lost ${losses[1]}.`;
       assert.ok(
         (await page.locator('.action-panel').innerText()).includes(expected),
         'Missing settled bot result: ' + expected,
@@ -230,21 +287,37 @@ try {
         assert.match(await page.locator('.recent-conquest').innerText(), /conquered/);
       if (index < 4) {
         const remaining = await page.evaluate(
-          (pause) =>
-            Math.max(0, Math.ceil(window.botRollTimes.at(-1) + pause - performance.now()) + 1),
+          (pause) => Math.max(0, Math.ceil(window.botRollTimes.at(-1) + pause - performance.now())),
           mode === 'fast' ? 1000 : 3000,
         );
         await page.clock.runFor(remaining);
+        await finishDecision(index);
       }
     }
     assert.deepEqual(errors, []);
     console.log(
       'PASS: ' +
         mode +
-        ' bot attacks show each phase summary after settling, including ties and conquest',
+        ' bots pause before each decision and reveal phase losses only after dice settle',
     );
+    if (mode === 'normal') {
+      const saved = await page.evaluate(() => localStorage.getItem('meridian-conquest-ui-v2'));
+      await page.evaluate(() => {
+        location.hash = 'campaigns';
+      });
+      await page
+        .locator('.dashboard-page, .campaign-grid, [data-action="new-campaign"]')
+        .first()
+        .waitFor();
+      await page.clock.runFor(10000);
+      assert.equal(
+        await page.evaluate(() => localStorage.getItem('meridian-conquest-ui-v2')),
+        saved,
+      );
+    }
     await page.close();
   }
+  // Report controls are presentation state: switching tabs must neither rewrite facts nor lose focus.
   const tabsGame = GameEngine.create('Report tabs check', 'ZA', true);
   const savedCommentary = 'Kestrel takes the lead in the recorded match.';
   tabsGame.events.at(-1).commentary = savedCommentary;
@@ -293,6 +366,7 @@ try {
   await page.locator('.country-roster [data-action="select-country"]').first().click();
   assert.equal(await aiTab.getAttribute('aria-selected'), 'true');
   assert.equal(await aiPanel.isVisible(), true);
+  // Treat generated narration as untrusted text and update it without replacing active game controls.
   const incoming = 'Brazil keeps up the pressure. <img src=x onerror=alert(1)>';
   const patchedInPlace = await page.evaluate(async (text) => {
     const { updateReportsCommentary } = await import('./ui/reports.js');
@@ -313,12 +387,14 @@ try {
   await page
     .locator('[data-reports-panel]')
     .screenshot({ path: '.firebase/reports-tabs-desktop.png' });
+  // Measure real browser geometry to catch dock overlays that string-based rendering tests cannot see.
   const reports = page.locator('[data-reports-panel]');
   const content = reports.locator('[data-report-content]');
   const worldMap = page.locator('.game-theatre .world-map');
   const originalMapHeight = (await worldMap.boundingBox()).height;
   await page.getByRole('button', { name: 'Pin reports', exact: true }).click();
-  assert.ok((await worldMap.boundingBox()).height < originalMapHeight);
+  assert.equal((await worldMap.boundingBox()).height, originalMapHeight);
+  await checkPinnedMapLayout(page);
   const dockLayout = await reports.evaluate((panel) => {
     const rect = panel.getBoundingClientRect();
     const controls = document.querySelector('.action-panel').getBoundingClientRect();
@@ -363,20 +439,17 @@ try {
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   await page.screenshot({ path: '.firebase/reports-pin-desktop.png' });
   console.log(
-    'PASS: pinned reports stay within the map column, reserve scrolling space and retain collapse state across updates',
+    'PASS: pinned reports stay within the map column, reserve scrolling space' +
+      ' and retain collapse state across updates',
   );
 
   await page.setViewportSize({ width: 1536, height: 728 });
   await page.getByRole('button', { name: 'Collapse reports', exact: true }).click();
   const fullMapHeight = (await worldMap.boundingBox()).height;
   await page.getByRole('button', { name: 'Expand reports', exact: true }).click();
-  const compactMap = await worldMap.boundingBox();
-  const theatreBox = await page.locator('.game-theatre').boundingBox();
-  assert.ok(compactMap.height < fullMapHeight);
-  assert.ok(Math.abs(compactMap.width / compactMap.height - 2) < 0.01);
-  assert.ok(theatreBox.y >= 15);
-  const actionsBox = await page.locator('.board-actions').boundingBox();
-  assert.ok(actionsBox.y + actionsBox.height < (await reports.boundingBox()).y);
+  const expandedMap = await worldMap.boundingBox();
+  assert.ok(expandedMap.height < fullMapHeight);
+  await checkPinnedMapLayout(page);
   assert.ok(
     await worldMap
       .locator('.map-marker text')
@@ -405,16 +478,14 @@ try {
     updateReportsCommentary(document, game);
   });
   assert.equal(await page.evaluate(() => scrollY), scrollBeforeReport);
-  await page.screenshot({ path: '.firebase/reports-compact-map-desktop.png' });
+  await page.screenshot({ path: '.firebase/reports-full-map-desktop.png' });
   await page.setViewportSize({ width: 1536, height: 640 });
-  await page.waitForFunction(() => {
-    const map = document.querySelector('.game-theatre').getBoundingClientRect();
-    const dock = document.querySelector('[data-reports-panel]').getBoundingClientRect();
-    return map.top >= 0 && map.bottom < dock.top;
-  });
-  assert.ok((await worldMap.boundingBox()).height < compactMap.height);
+  await checkPinnedMapLayout(page);
+  assert.ok((await worldMap.boundingBox()).height < expandedMap.height);
   console.log(
-    'PASS: expanded reports fit the whole proportional map and actions on short desktop windows, preserve country selection and do not scroll for incoming commentary',
+    'PASS: pinned reports leave the entire map and actions visible on short' +
+      ' desktop windows, without empty strips inside the map card or scrolling for' +
+      ' incoming commentary',
   );
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -451,10 +522,10 @@ try {
   const mobileMap = await worldMap.boundingBox();
   const mobileRoster = await page.locator('.roster-panel').boundingBox();
   assert.ok(mobileMap.y >= mobileRoster.y + mobileRoster.height);
-  assert.ok(mobileMap.y + mobileMap.height < (await reports.boundingBox()).y);
-  await page.screenshot({ path: '.firebase/reports-compact-map-mobile.png' });
+  await checkPinnedMapLayout(page);
+  await page.screenshot({ path: '.firebase/reports-full-map-mobile.png' });
   await page.getByRole('button', { name: 'Unpin', exact: true }).click();
-  assert.equal(await page.locator('.reports-map-compact').count(), 0);
+  assert.equal(await page.locator('.reports-map-expanded').count(), 0);
   assert.equal(await reports.evaluate((panel) => getComputedStyle(panel).position), 'static');
   assert.equal(
     await page.evaluate(() => document.documentElement.classList.contains('reports-docked')),
@@ -462,7 +533,8 @@ try {
   );
   assert.equal(await content.isVisible(), true);
   console.log(
-    'PASS: report tabs separate facts and AI, support keyboard navigation and retain selection across updates on desktop and mobile',
+    'PASS: report tabs separate facts and AI, support keyboard navigation and' +
+      ' retain selection across updates on desktop and mobile',
   );
 
   await page.evaluate(async () => {
@@ -472,16 +544,51 @@ try {
       { GameEngine },
       { syncReportsDock },
       { createMapView },
+      { createBattleViews },
     ] = await Promise.all([
       import('./multiplayer.js'),
       import('./rooms.js'),
       import('./engine.js'),
       import('./ui/reports.js'),
       import('./ui/map.js'),
+      import('./ui/battle.js'),
     ]);
     const host = { uid: 'host', displayName: 'Host' };
     const friend = { uid: 'friend', displayName: 'Friend' };
-    const room = startRoom(joinRoom(newRoom('ABC234', host), friend), host.uid).room;
+    // These recorded rooms predate opening rolls; the new interface must still render them.
+    window.createLegacyFixtureRoom = (code) => {
+      const {
+        setupVersion: _version,
+        countryChoices: _choices,
+        initiative: _initiative,
+        ...lobby
+      } = joinRoom(newRoom(code, host), friend);
+      return startRoom(lobby, host.uid).room;
+    };
+    window.fixtureBoardOptions = (getUI, getState) => {
+      const nameOf = (player) => getUI().game.playerNames[player];
+      const { gameView, die } = createBattleViews({
+        get multiplayer() {
+          return getUI();
+        },
+        get state() {
+          return getState();
+        },
+        motionFrame: null,
+        owned: (game, seat = getUI().playerSeat) =>
+          game.countries.filter((country) => country.owner === seat),
+        nav: () => '',
+        nameOf,
+        theatre: createMapView({ nameOf }).theatre,
+        campaignPopulationLabel: () => '',
+      });
+      return {
+        getState,
+        dieView: die,
+        renderGame: (game, header) => gameView(game, { roomHeader: header }),
+      };
+    };
+    const room = window.createLegacyFixtureRoom('ABC234');
     const game = JSON.parse(room.payload);
     game.position = game.order.indexOf(0);
     new GameEngine(game).event('decision', 'A shared factual decision.');
@@ -501,16 +608,21 @@ try {
         },
       },
     };
+    const state = {
+      allocations: {},
+      reportTab: 'ai',
+      reportDock: { pinned: true, collapsed: false },
+    };
     const multiplayer = createMultiplayerUI({
       getCloud: () => cloud,
-      getReportTab: () => 'ai',
-      getReportDock: () => ({ pinned: true, collapsed: false }),
+      ...window.fixtureBoardOptions(
+        () => multiplayer,
+        () => state,
+      ),
       changed: () => {
         document.getElementById('app').innerHTML = multiplayer.render();
         syncReportsDock(document);
       },
-      mapView: createMapView({ nameOf: (player) => game.playerNames[player] }).theatre,
-      diceView: () => '',
     });
     multiplayer.route('ABC234');
     await multiplayer.sessionChanged();
@@ -536,14 +648,12 @@ try {
     setReportsDock(panel, { pinned: true, collapsed: true });
     setReportsDock(panel, { pinned: true, collapsed: false });
   });
-  const roomMap = await page.locator('.room-board-grid .theatre').boundingBox();
-  assert.ok(roomMap.y >= 0);
-  assert.ok(roomMap.y + roomMap.height < (await reports.boundingBox()).y);
-  assert.equal(await page.locator('.reports-map-compact').count(), 1);
+  await checkPinnedMapLayout(page, '.board-grid .theatre');
+  assert.equal(await page.locator('.reports-map-expanded').count(), 1);
   await fieldTab.click();
   assert.match(await fieldPanel.innerText(), /A shared factual decision/);
   await page.evaluate(() => window.closeReportsRoom());
-  assert.equal(await page.locator('.reports-map-compact').count(), 0);
+  assert.equal(await page.locator('.reports-map-expanded').count(), 0);
   assert.equal(
     await page.evaluate(() => document.documentElement.classList.contains('reports-docked')),
     false,
@@ -552,8 +662,114 @@ try {
   console.log(
     'PASS: multiplayer friends receive commentary in its own tab without host generation controls',
   );
+
+  // Share one in-memory room between two clients to test host-only bot execution and reconnect timing.
+  const clockTime = new Date('2026-10-31T12:00:00Z');
+  await page.clock.install({ time: clockTime });
+  await page.clock.pauseAt(new Date(clockTime.getTime() + 1000));
+  await page.evaluate(async () => {
+    const { createMultiplayerUI } = await import('./multiplayer.js');
+    const { moveRoom } = await import('./rooms.js');
+    const host = { uid: 'host', displayName: 'Host' };
+    const friend = { uid: 'friend', displayName: 'Friend' };
+    let room = window.createLegacyFixtureRoom('BCD345');
+    const game = JSON.parse(room.payload);
+    game.position = game.order.indexOf(2);
+    game.round = 2;
+    game.budget = 4;
+    game.countries[2].army = 20;
+    room = { ...room, currentSeat: 2, controllerUid: host.uid, payload: JSON.stringify(game) };
+    const watchers = new Map();
+    const failures = [];
+    document.getElementById('app').innerHTML =
+      '<div id="host-room"></div><div id="friend-room"></div>';
+    const createClient = (user) => {
+      const cloud = {
+        user,
+        ready: true,
+        rooms: {
+          join: async () => {},
+          watch: (_, onRoom) => {
+            watchers.set(user.uid, onRoom);
+            onRoom(structuredClone(room));
+            return () => watchers.delete(user.uid);
+          },
+          move: async (_, revision, action, values) => {
+            room = moveRoom(room, user.uid, revision, action, values).room;
+            for (const onRoom of watchers.values()) onRoom(structuredClone(room));
+          },
+        },
+      };
+      const state = { allocations: {}, reportDock: {}, reportTab: 'field' };
+      const ui = createMultiplayerUI({
+        getCloud: () => cloud,
+        ...window.fixtureBoardOptions(
+          () => ui,
+          () => state,
+        ),
+        notify: (message) => failures.push(message),
+        changed: () => {
+          document.getElementById(user.uid + '-room').innerHTML = ui.render();
+        },
+      });
+      ui.route(room.code);
+      return ui;
+    };
+    const hostUI = createClient(host),
+      friendUI = createClient(friend);
+    await Promise.all([hostUI.sessionChanged(), friendUI.sessionChanged()]);
+    window.botPacing = { hostUI, friendUI, room: () => room, failures };
+  });
+  const roomState = () => page.evaluate(() => JSON.parse(window.botPacing.room().payload));
+  const initialRoom = await roomState();
+  await page.clock.runFor(2400);
+  const announcedRoom = await roomState();
+  assert.equal(announcedRoom.events.at(-1).intent.action, 'reinforce');
+  assert.deepEqual(announcedRoom.countries, initialRoom.countries);
+  assert.equal(
+    await page.locator('#host-room [data-npc-decision]').innerText(),
+    await page.locator('#friend-room [data-npc-decision]').innerText(),
+  );
+  await page.clock.runFor(4999);
+  assert.deepEqual(await roomState(), announcedRoom);
+  await page.clock.runFor(1);
+  assert.equal((await roomState()).budget, 0);
+  assert.equal((await roomState()).countries[2].army, 24);
+  await page.clock.runFor(2400);
+  const announcedAttack = await roomState();
+  assert.equal(announcedAttack.events.at(-1).intent.action, 'attack');
+  assert.equal(announcedAttack.battle, null);
+  await page.evaluate(() => window.botPacing.hostUI.route(null));
+  await page.clock.runFor(6000);
+  assert.deepEqual(await roomState(), announcedAttack, 'Friends must not advance bot turns');
+  await page.evaluate(async () => {
+    window.botPacing.hostUI.route('BCD345');
+    await window.botPacing.hostUI.sessionChanged();
+  });
+  await page.clock.runFor(4999);
+  assert.deepEqual(await roomState(), announcedAttack);
+  await page.clock.runFor(1);
+  assert.equal((await roomState()).battle.phase, 0);
+  await page.clock.runFor(2400);
+  const announcedRoll = await roomState();
+  assert.equal(announcedRoll.events.at(-1).intent.action, 'roll');
+  await page.clock.runFor(4999);
+  assert.deepEqual(await roomState(), announcedRoll);
+  await page.clock.runFor(1);
+  assert.ok((await roomState()).events.some((event) => event.type === 'dice'));
+  assert.deepEqual(await page.evaluate(() => window.botPacing.failures), []);
+  await page.evaluate(() => {
+    window.botPacing.hostUI.route(null);
+    window.botPacing.friendUI.route(null);
+  });
+  assert.deepEqual(tabErrors, []);
+  console.log(
+    'PASS: multiplayer host and friend see decisions for five seconds before' +
+      ' actions, including after reconnecting',
+  );
   await page.close();
 } finally {
+  // Release Chromium and the ephemeral HTTP port even if an animation or geometry assertion fails.
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));
 }

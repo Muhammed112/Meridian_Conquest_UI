@@ -1,3 +1,4 @@
+# Normalize source text without applying line-ending conversion to media or documents.
 * text=auto eol=lf
 *.mp3 binary
 *.ogg binary

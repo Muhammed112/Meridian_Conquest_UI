@@ -7,6 +7,7 @@ const project = firebaseConfig.projectId,
 const recipients = ['ammarcanani@gmail.com', 'mc.tanner@uct.ac.za', 'ridewaan.hanslo@uct.ac.za'];
 const token = await firebaseAdminToken(),
   base = 'https://cloudresourcemanager.googleapis.com/v1/projects/' + project;
+/** Bound IAM requests and retain conflict status for additive-policy retries. */
 async function api(url, method = 'GET', body) {
   const response = await fetch(url, {
     method,
@@ -24,6 +25,7 @@ async function api(url, method = 'GET', body) {
 }
 const policy = () =>
   api(base + ':getIamPolicy', 'POST', { options: { requestedPolicyVersion: 3 } });
+/** Verify a read-only role and add recipients without removing existing IAM bindings. */
 async function main() {
   const definition = await api('https://iam.googleapis.com/v1/' + role),
     permissions = definition.includedPermissions || [];
@@ -57,6 +59,7 @@ async function main() {
     if (error.code !== 'EEXIST') throw error;
   }
   const failures = [];
+  // Read a fresh policy per attempt, retaining its etag so concurrent IAM edits cannot be lost.
   for (const email of recipients) {
     try {
       for (let attempt = 0; attempt < 3; attempt++) {

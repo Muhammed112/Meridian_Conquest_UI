@@ -2,6 +2,11 @@
   "indexes": [],
   "fieldOverrides": [
     {
+      "collectionGroup": "liveGames",
+      "fieldPath": "payload",
+      "indexes": []
+    },
+    {
       "collectionGroup": "games",
       "fieldPath": "payload",
       "indexes": []

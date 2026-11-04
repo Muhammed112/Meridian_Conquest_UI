@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GameEngine } from '../dist/engine.js';
 import { difficultyFor, difficultyOptions } from '../dist/difficulty.js';
 
+/** Give levels the same board so strategy, rather than randomized setup, explains differences. */
 function arena(difficulty) {
   const game = GameEngine.create('Difficulty test', 'ZA', true, difficulty);
   Object.assign(game, {
@@ -19,6 +20,7 @@ function arena(difficulty) {
   );
   return new GameEngine(game);
 }
+/** Probe risk tolerance against one defender while reserving the source garrison. */
 function canAttack(level, available) {
   const engine = arena(level);
   engine.game.countries[1].army = available + 1;
@@ -26,6 +28,8 @@ function canAttack(level, available) {
   return engine.npcPlan().to?.code === engine.game.countries[2].code;
 }
 
+// Saved games must resume at their chosen difficulty, with a safe default for unknown persisted
+// values.
 test('each campaign persists its chosen difficulty and unknown levels use Medium', () => {
   for (const level of difficultyOptions) {
     const game = GameEngine.create('Saved setting', 'ZA', true, level.id);
@@ -35,6 +39,8 @@ test('each campaign persists its chosen difficulty and unknown levels use Medium
     assert.equal(difficultyFor(invalid).id, 'medium');
 });
 
+// Difficulty must change risk tolerance in a predictable order rather than make the levels
+// equivalent.
 test('the four levels accept progressively closer small battles', () => {
   assert.equal(canAttack('easy', 21), true);
   assert.equal(canAttack('easy', 17), false);
@@ -45,6 +51,7 @@ test('the four levels accept progressively closer small battles', () => {
   assert.equal(canAttack('extreme', 15), true);
 });
 
+// Harder strategy may concentrate reinforcements differently but must never receive extra soldiers.
 test('reinforcement priorities differ while every level spends the exact normal budget', () => {
   const offensive = [];
   for (const level of difficultyOptions) {
@@ -69,6 +76,8 @@ test('reinforcement priorities differ while every level spends the exact normal 
   assert.deepEqual(offensive, [10, 13, 16, 18]);
 });
 
+// Every level must defend captured holdings without creating troops or oscillating transfers
+// forever.
 test('every difficulty conserves transferred troops and avoids one-soldier occupation loops', () => {
   for (const level of difficultyOptions) {
     const engine = arena(level.id),
@@ -87,6 +96,8 @@ test('every difficulty conserves transferred troops and avoids one-soldier occup
   }
 });
 
+// Retreat tolerance should increase with difficulty while respecting each battle's actual remaining
+// forces.
 test('retreat decisions become less forgiving across difficulty levels', () => {
   const continues = (level, available, defenders, eliminates = true) => {
     const engine = arena(level),
@@ -106,6 +117,7 @@ test('retreat decisions become less forgiving across difficulty levels', () => {
   assert.equal(continues('extreme', 2, 5), true);
 });
 
+// A favorable-looking ratio must not lure advanced bots into an unwinnable large engagement.
 test('Hard and Extreme recognise hopeless large battles despite a superficially close ratio', () => {
   for (const level of ['hard', 'extreme']) {
     const engine = arena(level),
@@ -117,6 +129,8 @@ test('Hard and Extreme recognise hopeless large battles despite a superficially 
   }
 });
 
+// Advanced bots need strategic pressure on the leader instead of always choosing a cheap minor
+// target.
 test('higher levels put more pressure on a strong player instead of farming a cheaper target', () => {
   const targetFor = (level) => {
     const engine = arena(level),
@@ -138,6 +152,7 @@ test('higher levels put more pressure on a strong player instead of farming a ch
   }
 });
 
+// Easy mode should leave room for a learner when a useful alternative enemy is available.
 test('Easy gives the player breathing room when another worthwhile target is available', () => {
   const targetFor = (level) => {
     const engine = arena(level),
@@ -157,6 +172,8 @@ test('Easy gives the player breathing room when another worthwhile target is ava
   assert.equal(medium.selected, medium.human);
 });
 
+// Beginner leniency must not prevent the final opponent from being attacked and the game from
+// ending.
 test('Easy still attacks the player when that is the only remaining rival', () => {
   const engine = arena('easy');
   engine.game.countries.forEach((c) => Object.assign(c, { owner: 1, army: 4 }));
@@ -167,6 +184,8 @@ test('Easy still attacks the player when that is the only remaining rival', () =
   assert.equal(engine.npcPlan().to?.code, target.code);
 });
 
+// Difficulty changes decisions only; identical combat dice must produce identical losses at every
+// level.
 test('difficulty never changes the result of identical dice rolls', () => {
   const outcomes = difficultyOptions.map((level) => {
     const engine = arena(level.id),

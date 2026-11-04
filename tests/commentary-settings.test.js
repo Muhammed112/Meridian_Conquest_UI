@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bindAppEvents } from '../dist/controllers/events.js';
 import { createMultiplayerUI } from '../dist/multiplayer.js';
-import { newRoom, startRoom } from '../dist/rooms.js';
+import { startRoom } from '../dist/rooms.js';
+import { legacyRoom as newRoom } from './helpers/rooms.js';
 
+/** Capture the real delegated change handler while keeping preference writes and model calls offline. */
 function settingsFixture() {
   const preferences = [],
     requests = [],
@@ -33,12 +35,14 @@ function settingsFixture() {
       bindAppEvents(context);
       change({ target: { id: 'ai-enabled', checked: enabled } });
     } finally {
+      // Confine the fake document to this settings change so later cases retain their environment.
       globalThis.document = previous;
     }
   }
   return { context, campaign, preferences, requests, errors, toggle };
 }
 
+// Switching AI on during a match must start narration without requiring a separate Generate click.
 test('enabling commentary in Settings requests recent action in the current campaign', () => {
   const f = settingsFixture();
   f.toggle(true);
@@ -49,6 +53,7 @@ test('enabling commentary in Settings requests recent action in the current camp
   assert.equal(f.requests.length, 1, 'Disabling must not start another request');
 });
 
+// Changing a preference in menus or read-only views must not unexpectedly spend model quota.
 test('enabling commentary outside live gameplay only saves the preference', () => {
   for (const view of ['welcome', 'campaigns', 'setup', 'history']) {
     const f = settingsFixture();
@@ -63,6 +68,8 @@ test('enabling commentary outside live gameplay only saves the preference', () =
   assert.deepEqual(shared.requests, []);
 });
 
+// A half-loaded campaign or unavailable service must not turn a settings toggle into an application
+// crash.
 test('Settings waits for campaign loading and tolerates an unavailable cloud service', () => {
   const f = settingsFixture();
   f.context.cloud.ready = false;
@@ -76,6 +83,7 @@ test('Settings waits for campaign loading and tolerates an unavailable cloud ser
   assert.deepEqual(missing.requests, []);
 });
 
+// Shared matches must use their room-aware narration path and surface recoverable setup failures.
 test('Settings uses the multiplayer request path and reports a failed request without throwing', () => {
   const f = settingsFixture();
   f.context.state.view = 'multiplayer';
@@ -88,6 +96,8 @@ test('Settings uses the multiplayer request path and reports a failed request wi
   assert.deepEqual(f.errors, ['The room is still loading.']);
 });
 
+// Only the room host may generate shared reports, preventing one duplicate model request per
+// friend.
 test('only the host starts shared commentary when enabling Settings in a multiplayer room', async () => {
   const host = { uid: 'host', displayName: 'Host' },
     room = startRoom(newRoom('ABC234', host), host.uid).room,
@@ -109,7 +119,12 @@ test('only the host starts shared commentary when enabling Settings in a multipl
       },
     },
   };
-  const multiplayer = createMultiplayerUI({ getCloud: () => cloud, changed() {} });
+  const state = {};
+  const multiplayer = createMultiplayerUI({
+    getCloud: () => cloud,
+    getState: () => state,
+    changed() {},
+  });
   assert.equal(multiplayer.requestCommentary(), 0);
   multiplayer.route('ABC234');
   await watched.promise;

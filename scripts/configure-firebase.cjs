@@ -1,18 +1,16 @@
 // Uses the existing Firebase CLI sign-in; never prints or persists access tokens.
 const project = 'meridian-conquest-m112';
+/** Run the explicitly selected operator action; importing app code never runs this setup. */
 async function main() {
-  const { firebaseCliAuth } = await import('./firebase-admin-access.mjs');
-  const auth = firebaseCliAuth();
-  const account = auth.getGlobalDefaultAccount();
-  if (!account) throw new Error('Sign in with npx firebase login first');
-  const token = await auth.getAccessToken(account.tokens.refresh_token, [
-    'https://www.googleapis.com/auth/cloud-platform',
-  ]);
+  const { firebaseAdminToken } = await import('./firebase-admin-access.mjs');
+  const token = await firebaseAdminToken();
+  /** Call Firebase administration endpoints with an in-memory token and a request deadline. */
   async function api(url, method = 'GET', body) {
     const response = await fetch(url, {
       method,
+      signal: AbortSignal.timeout(20000),
       headers: {
-        Authorization: 'Bearer ' + token.access_token,
+        Authorization: 'Bearer ' + token,
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -47,6 +45,7 @@ async function main() {
     }
     throw new Error('Service activation is still pending');
   } else if (action === 'auth') {
+    // Append required local/hosting domains without discarding previously authorized deployments.
     const base = 'https://identitytoolkit.googleapis.com/admin/v2/projects/' + project + '/config';
     const old = await api(base);
     const domains = [
@@ -64,6 +63,7 @@ async function main() {
     console.log('Email/password enabled:', updated.signIn?.email?.enabled === true);
     console.log('Authorized domains:', updated.authorizedDomains?.join(', '));
   } else if (action === 'billing') {
+    // This branch inspects billing only; it cannot upgrade the project's plan.
     const data = await api(
       'https://cloudbilling.googleapis.com/v1/projects/' + project + '/billingInfo',
     );

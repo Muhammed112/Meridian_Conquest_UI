@@ -1,3 +1,4 @@
+# Dependencies and local credentials are supplied separately from the source checkout.
 node_modules/
 .env
 .env.*
@@ -6,6 +7,8 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+# Operator backups, attestation tokens and linked-host metadata must never enter source control.
 .firebase/
+.vercel/
 *debug*.log
 functions/.secret.local

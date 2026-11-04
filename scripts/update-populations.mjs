@@ -11,6 +11,7 @@ import {
 } from '../dist/population-schema.js';
 import { firebaseConfig } from '../dist/firebase-config.js';
 
+// Traverse the parsed document rather than relying on HTML whitespace or attribute ordering.
 const children = (node) => node.childNodes || [];
 const descendants = (node, tag) =>
   children(node).flatMap((child) => [
@@ -18,6 +19,10 @@ const descendants = (node, tag) =>
     ...descendants(child, tag),
   ]);
 const text = (node) => (node.nodeName === '#text' ? node.value : children(node).map(text).join(''));
+/**
+ * Identify one source table by headings and parse visible counts rather than sorting
+ * attributes.
+ */
 export function readPopulationRows(html) {
   if (typeof html !== 'string' || html.length > 2000000)
     throw new Error('Invalid Worldometers response.');
@@ -27,6 +32,7 @@ export function readPopulationRows(html) {
     table,
     headings: descendants(table, 'th').map((cell) => text(cell).trim().replace(/\s+/g, ' ')),
   }));
+  // An ambiguous or renamed table is a source change to review, not permission to guess the columns.
   const matching = candidates.filter(
     ({ headings }) =>
       headings.some((h) => /^Population\s+(20\d\d)$/.test(h)) &&
@@ -59,6 +65,7 @@ export function readPopulationRows(html) {
   }
   return { year, rows };
 }
+/** Match every required catalogue slug and validate a complete versioned snapshot. */
 export function parsePopulationTable(html, now = Date.now()) {
   const { year, rows } = readPopulationRows(html),
     codes = new Map(Object.entries(populationCountries).map(([code, slug]) => [slug, code])),
@@ -83,6 +90,7 @@ export function parsePopulationTable(html, now = Date.now()) {
     now,
   );
 }
+/** Fetch the assignment source with a timeout, accepting HTML only. */
 export async function fetchPopulations(fetcher = fetch, now = Date.now()) {
   const response = await fetcher(POPULATION_SOURCE, {
     signal: AbortSignal.timeout(20000),
@@ -99,6 +107,7 @@ export const populationDocument = firebaseConfig?.projectId
 export const populationURL = populationDocument
   ? 'https://firestore.googleapis.com/v1/' + populationDocument
   : null;
+/** Read the last good public snapshot and revision for conflict-safe publication. */
 export async function publishedPopulations(fetcher = fetch) {
   if (!populationURL) throw new Error('Configure Firebase before publishing population data.');
   const response = await fetcher(populationURL, { signal: AbortSignal.timeout(10000) });
@@ -119,6 +128,7 @@ export async function publishedPopulations(fetcher = fetch) {
     updateTime: document.updateTime,
   };
 }
+/** Publish only reference data, requiring the previously read revision to remain current. */
 async function publish(snapshot, previous, { admin = false } = {}) {
   let token;
   if (admin) {
@@ -143,8 +153,11 @@ async function publish(snapshot, previous, { admin = false } = {}) {
       throw new Error('Population updater sign-in failed (HTTP ' + response.status + ').');
     token = auth.idToken;
   }
+  // Compare-and-set prevents one updater from overwriting a newer snapshot published meanwhile.
   const saved = await fetch(
-    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents:commit`,
+    /* prettier-ignore */ `https://firestore.googleapis.com/v1/projects/${
+      firebaseConfig.projectId
+    }/databases/(default)/documents:commit`,
     {
       method: 'POST',
       signal: AbortSignal.timeout(15000),
@@ -170,6 +183,10 @@ async function publish(snapshot, previous, { admin = false } = {}) {
         '); the previous snapshot remains available.',
     );
 }
+/**
+ * Validate all source changes before optionally publishing or atomically replacing the
+ * offline bundle.
+ */
 export async function updatePopulations({
   publishRemote = false,
   writeBundle = false,
@@ -184,6 +201,7 @@ export async function updatePopulations({
     bundledPopulations = snapshot;
   }
   const previous = publishRemote ? await publishedPopulations() : null;
+  // Compare with last-good reference data before any write; existing campaign armies are never edited.
   validatePopulationUpdate(snapshot, previous?.snapshot || bundledPopulations);
   if (publishRemote) await publish(snapshot, previous, { admin });
   if (writeBundle) {
@@ -191,17 +209,23 @@ export async function updatePopulations({
       temporary = file + '.tmp';
     await writeFile(
       temporary,
-      '// Last validated Worldometers snapshot; gameplay also works offline.\nexport const bundledPopulations = ' +
+      '// Last validated Worldometers snapshot; gameplay also works' +
+        ' offline.\nexport const bundledPopulations = ' +
         JSON.stringify(snapshot, null, 2) +
         ';\n',
     );
     await rename(temporary, file);
   }
   console.log(
-    `Validated ${Object.keys(snapshot.populations).length} countries from Worldometers (${snapshot.year}).${publishRemote ? ' Published for new campaigns.' : ''}${writeBundle ? ' Offline snapshot saved.' : ''}`,
+    /* prettier-ignore */ `Validated ${
+      Object.keys(snapshot.populations).length
+    } countries from Worldometers (${snapshot.year}).${
+      publishRemote ? ' Published for new campaigns.' : ''
+    }${writeBundle ? ' Offline snapshot saved.' : ''}`,
   );
   return snapshot;
 }
+// Imports expose pure parsing helpers to tests; only an explicit CLI invocation starts network work.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
   updatePopulations({
     publishRemote: process.argv.includes('--publish') || process.argv.includes('--publish-admin'),

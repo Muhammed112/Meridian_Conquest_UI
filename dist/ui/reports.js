@@ -3,6 +3,7 @@ import { renderIcon } from './components.js';
 
 let dockObserver;
 
+/** Reserve the sticky roster’s height only when it is stacked above the map. */
 function mapTopInset(column) {
   const roster = column.closest('.board-grid')?.querySelector('.roster-panel');
   if (roster && roster.getBoundingClientRect().right > column.getBoundingClientRect().left)
@@ -10,6 +11,7 @@ function mapTopInset(column) {
   return 16;
 }
 
+/** Render escaped recent narration in reverse order within the bounded report feed. */
 function commentaryRows(game, limit) {
   const reports = game.events
     .filter((event) => typeof event.commentary === 'string' && event.commentary.trim())
@@ -19,8 +21,9 @@ function commentaryRows(game, limit) {
     return '<p class="report-empty">No AI commentary yet. Generated reports will appear here.</p>';
   return reports
     .map(
-      (event) =>
-        /* HTML */ `<div class="activity-row"
+      (
+        event,
+      ) => /* prettier-ignore */ `<div class="activity-row"
           ><div class="activity-copy"
             ><p class="ai-commentary" data-commentary-event="${escapeHTML(event.id)}"
               >AI commentary: ${escapeHTML(event.commentary)}</p
@@ -29,13 +32,19 @@ function commentaryRows(game, limit) {
               ${escapeHTML(event.type.toUpperCase())}</span
             ></div
           ><span class="activity-time"
-            >${new Date(event.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span
+            >${
+              new Date(event.at).toLocaleTimeString('en-GB', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            }</span
           ></div
         >`,
     )
     .join('');
 }
 
+/** Render accessible report tabs and optional pin/collapse controls without attaching listeners. */
 export function renderReports(
   game,
   {
@@ -51,19 +60,19 @@ export function renderReports(
   const active = tab === 'ai' ? 'ai' : 'field';
   const prefix = 'reports-' + escapeHTML(game.id);
   const collapsed = Boolean(dock.pinned && dock.collapsed);
-  return /* HTML */ `<section
+  return /* prettier-ignore */ `<section
     class="panel reports-panel ${dock.pinned ? 'is-pinned' : ''}"
     data-reports-panel
     data-reports-collapsed="${collapsed}"
     ><div class="activity-head reports-head"
       ><div class="report-tabs" role="tablist" aria-label="Battle reports"
-        >${[
-          ['field', 'Field reports'],
-          ['ai', 'AI commentary'],
-        ]
-          .map(
-            ([id, label]) =>
-              /* HTML */ `<button
+        >${
+          [
+            ['field', 'Field reports'],
+            ['ai', 'AI commentary'],
+          ]
+            .map(
+              ([id, label]) => /* HTML */ `<button
                 type="button"
                 class="report-tab"
                 role="tab"
@@ -74,8 +83,9 @@ export function renderReports(
                 data-report-tab="${id}"
                 >${label}</button
               >`,
-          )
-          .join('')}</div
+            )
+            .join('')
+        }</div
       ><div class="commentary-actions"
         >${badge}<span data-commentary-actions ${active === 'ai' ? '' : 'hidden'}
           >${commentaryAction}</span
@@ -114,7 +124,11 @@ export function renderReports(
         aria-labelledby="${prefix}-tab-ai"
         data-report-panel="ai"
         ${active === 'ai' ? '' : 'hidden'}
-        >${live ? '<p class="commentary-feed-status" data-ai-feed-status role="status"></p>' : ''}<div
+        >${
+          live
+            ? '<p class="commentary-feed-status" data-ai-feed-status role="status"></p>'
+            : ''
+        }<div
           class="activity-feed"
           data-commentary-feed="${escapeHTML(game.id)}"
           data-commentary-limit="${limit}"
@@ -125,6 +139,7 @@ export function renderReports(
   >`;
 }
 
+/** Replace the dock observer and fit the whole map and actions above expanded pinned reports. */
 export function syncReportsDock(root) {
   dockObserver?.disconnect();
   dockObserver = null;
@@ -132,19 +147,20 @@ export function syncReportsDock(root) {
   const panel = root.querySelector('[data-reports-panel].is-pinned');
   const column = panel?.parentElement;
   const theatre = column?.querySelector('.theatre');
-  const compactColumn = panel?.dataset.reportsCollapsed === 'false' && theatre ? column : null;
-  for (const previous of ownerDocument.querySelectorAll('.reports-map-compact')) {
-    if (previous === compactColumn) continue;
-    previous.classList.remove('reports-map-compact');
+  const expandedMapColumn = panel?.dataset.reportsCollapsed === 'false' && theatre ? column : null;
+  for (const previous of ownerDocument.querySelectorAll('.reports-map-expanded')) {
+    if (previous === expandedMapColumn) continue;
+    previous.classList.remove('reports-map-expanded');
     previous.style.removeProperty('--reports-map-width');
     previous.style.removeProperty('--reports-map-font-size');
   }
-  compactColumn?.classList.add('reports-map-compact');
+  expandedMapColumn?.classList.add('reports-map-expanded');
   ownerDocument.documentElement.classList.toggle('reports-docked', Boolean(panel));
   if (!panel) {
     ownerDocument.documentElement.style.removeProperty('--reports-dock-height');
     return;
   }
+  // Measure actual panel height so expanded reports reserve space rather than cover controls.
   const alignDock = () => {
     const bounds = column.getBoundingClientRect();
     panel.style.setProperty('--reports-dock-left', Math.max(12, bounds.left) + 'px');
@@ -157,23 +173,17 @@ export function syncReportsDock(root) {
       '--reports-dock-height',
       Math.ceil(dockHeight) + 24 + 'px',
     );
-    if (compactColumn) {
-      const chromeHeight =
-        theatre.querySelector('.theatre-head').offsetHeight +
-        theatre.querySelector('.theatre-footer').offsetHeight +
-        2;
-      const actionsHeight = column.querySelector('.board-actions')?.offsetHeight || 0;
+    if (expandedMapColumn) {
       const availableHeight =
         ownerDocument.documentElement.clientHeight -
         dockHeight -
-        chromeHeight -
-        actionsHeight -
+        (column.querySelector('.board-actions')?.offsetHeight || 0) -
         mapTopInset(column) -
-        20;
-      const mapHeight = Math.max(140, Math.min(360, availableHeight));
-      const mapWidth = Math.min(bounds.width - 2, mapHeight * 2);
-      column.style.setProperty('--reports-map-width', mapWidth + 'px');
-      // Keep labels readable as the proportional SVG becomes smaller.
+        24;
+      const mapWidth = Math.min(column.clientWidth - 2, Math.max(1, availableHeight) * 2);
+      // Fit the whole card above reports without leaving empty strips beside the map.
+      column.style.setProperty('--reports-map-width', mapWidth + 2 + 'px');
+      // Keep country labels readable when the pinned map needs to become smaller.
       column.style.setProperty(
         '--reports-map-font-size',
         Math.max(9.5, (8 * 960) / mapWidth) + 'px',
@@ -186,6 +196,7 @@ export function syncReportsDock(root) {
   dockObserver.observe(panel.parentElement);
 }
 
+/** Update pin/collapse state in place and scroll the map into view only when newly expanded. */
 export function setReportsDock(panel, dock) {
   const wasExpanded =
     panel.classList.contains('is-pinned') && panel.dataset.reportsCollapsed === 'false';
@@ -213,8 +224,10 @@ export function setReportsDock(panel, dock) {
   }
 }
 
+/** Switch accessible tabs in place, preserving gameplay controls and animation clocks. */
 export function selectReportTab(panel, tab) {
   const active = tab === 'ai' ? 'ai' : 'field';
+  // Keep one tab in the keyboard sequence, matching the arrow-key handler in the controller.
   for (const button of panel.querySelectorAll('[data-report-tab]')) {
     const selected = button.dataset.reportTab === active;
     button.setAttribute('aria-selected', String(selected));

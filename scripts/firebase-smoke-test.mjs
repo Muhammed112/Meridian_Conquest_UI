@@ -12,6 +12,7 @@ if (!config?.projectId) throw new Error('Firebase is not configured');
 const base = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents`;
 const users = [],
   documents = [];
+/** Assert the expected live API status while keeping credentials out of diagnostic messages. */
 async function request(url, { token, method = 'GET', body, status = 200 } = {}) {
   const response = await fetch(url, {
     method,
@@ -41,6 +42,7 @@ const fields = (value) =>
       typeof item === 'number' ? { integerValue: String(item) } : { stringValue: item },
     ]),
   );
+/** Exercise isolated live fixtures and clean up only resources created by this run. */
 async function main() {
   try {
     for (let n = 0; n < 2; n++) {
@@ -57,6 +59,7 @@ async function main() {
     assert.equal(signedIn.localId, owner.localId);
     console.log('PASS: email/password signup and sign-in');
     const game = GameEngine.create('Temporary integration check', 'ZA');
+    // Exercise the supported legacy record format to catch rule changes that would strand older saves.
     const { events, ...board } = game;
     const gamePath = `users/${owner.localId}/games/${game.id}`;
     documents.push(gamePath);
@@ -68,6 +71,7 @@ async function main() {
     const saved = await request(`${base}/${gamePath}`, { token: signedIn.idToken });
     assert.equal(JSON.parse(saved.fields.payload.stringValue).id, game.id);
     console.log('PASS: campaign save and reload');
+    // Check rules directly: hiding controls is insufficient to protect private campaigns from REST writes.
     for (const token of [undefined, other.idToken]) {
       await request(`${base}/${gamePath}`, { token, status: 403 });
       await request(`${base}/${gamePath}`, {
@@ -78,6 +82,7 @@ async function main() {
       });
     }
     console.log('PASS: visitors and other accounts cannot read or change the campaign');
+    // Persist one event twice to prove ordered history stays readable but recorded facts are immutable.
     const event = events[0],
       eventPath = gamePath + '/events/' + event.id;
     documents.push(eventPath);
@@ -122,6 +127,7 @@ async function main() {
   } finally {
     let cleanupError;
     try {
+      // Track exact fixture documents, deleting child events before their parent and never sweeping users.
       if (documents.length) {
         const cliAuth = firebaseCliAuth();
         const account = cliAuth.getGlobalDefaultAccount();

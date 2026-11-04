@@ -27,13 +27,20 @@ export const commanders = [
   'Echo',
 ];
 const initialPopulationSnapshot = validatePopulationSnapshot(bundledPopulations);
-export const catalogue = countryMetadata.map(({ populationSlug: _populationSlug, ...country }) => ({
-  ...country,
-  population: initialPopulationSnapshot.populations[country.code] / 1000000,
-}));
+// Gameplay population bands use millions; downloaded snapshots store whole-person counts.
+const referenceCatalogue = countryMetadata.map(
+  ({ populationSlug: _populationSlug, ...country }) => ({
+    ...country,
+    population: initialPopulationSnapshot.populations[country.code] / 1000000,
+  }),
+);
+/** Keep selectable countries separate from the reference needed to read existing saves. */
+export const isPlayableCountry = (code) =>
+  code !== 'IL' && referenceCatalogue.some((country) => country.code === code);
+export const catalogue = referenceCatalogue.filter((country) => isPlayableCountry(country.code));
 // Preserve original figures only as fallbacks for old saves missing their own snapshot.
 export const legacyPopulations = Object.freeze({
-  ...Object.fromEntries(catalogue.map((country) => [country.code, country.population])),
+  ...Object.fromEntries(referenceCatalogue.map((country) => [country.code, country.population])),
   ...Object.fromEntries(legacyCountries.map((country) => [country.code, country.population])),
 });
 export const populationReference = {
@@ -41,8 +48,11 @@ export const populationReference = {
   year: initialPopulationSnapshot.year,
   fetchedAt: initialPopulationSnapshot.fetchedAt,
 };
+/** Convert population in millions to the assignment’s inclusive starting-army bands. */
 export const armyValue = (population) =>
   [5, 10, 25, 50, 75, 100, 125, 150, Infinity].findIndex((max) => population <= max) + 1;
+/** Total conquest bonus, including the soldier that garrisons the captured country. */
+export const conquestReward = (originalArmyValue) => Math.max(2, Math.floor(originalArmyValue / 2));
 // Keep saved gameplay values; use trusted local metadata for labels and geometry.
 export function savedCountryPopulation(country) {
   const population =
@@ -59,7 +69,7 @@ export function savedCountryPopulation(country) {
     throw new Error('Invalid saved country population.');
   return { population, value };
 }
-export const findCountry = (code) => catalogue.find((country) => country.code === code);
+export const findCountry = (code) => referenceCatalogue.find((country) => country.code === code);
 export const flag = (code) => findCountry(code)?.flag || '🌐';
 export const initials = (name) =>
   name

@@ -46,6 +46,7 @@ const server = createServer(async (req, res) => {
         .end(JSON.stringify(localPopulations.snapshot));
       return;
     }
+    // This dynamic module is available only from the loopback server, never from public dist assets.
     if (request.pathname === '/ai-local-config.js') {
       res
         .writeHead(200, { 'Content-Type': 'text/javascript' })
@@ -56,6 +57,7 @@ const server = createServer(async (req, res) => {
         );
       return;
     }
+    // Resolve symlinks and traversal before exposing a file, keeping private workspace files outside root.
     const file = await realpath(
       path.resolve(
         root,
@@ -84,5 +86,6 @@ server.on('error', (error) => {
 server.listen(Number(process.env.MERIDIAN_PORT || 8081), '127.0.0.1', () =>
   console.log('Meridian Conquest: http://localhost:' + server.address().port),
 );
+// Serve the offline snapshot immediately; failed background refreshes cannot prevent game startup.
 void localPopulations.refresh();
 setInterval(() => void localPopulations.refresh(), 3600000).unref();

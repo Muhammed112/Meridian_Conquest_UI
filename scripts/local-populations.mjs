@@ -20,9 +20,14 @@ export async function createLocalPopulationSource({
     snapshot = validatePopulationUpdate(saved.snapshot, snapshot, now());
     checkedAt = Number.isFinite(saved.checkedAt) && saved.checkedAt <= now() ? saved.checkedAt : 0;
   } catch {
-    // Optional storage or browser capability is unavailable; retain the fallback.
+    // A missing, corrupt or older disk cache must not replace the validated offline snapshot.
   }
+  /**
+   * Fetch at most daily, committing validated data to disk before replacing the active
+   * snapshot.
+   */
   async function refresh() {
+    // Coalesce concurrent HTTP callers and the timer into one fetch, with an hourly failure backoff.
     if (pending) return pending;
     if (now() < retryAfter || (checkedAt && now() - checkedAt < 86400000)) return false;
     pending = (async () => {

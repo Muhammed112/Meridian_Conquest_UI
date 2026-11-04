@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GameEngine } from '../dist/engine.js';
+import { catalogue } from '../dist/data.js';
 import {
   MotionDirector,
   countryMotion,
@@ -18,6 +19,7 @@ import {
   rollPending,
 } from '../dist/motion.js';
 
+/** Drive real presentation code with an injected clock so reveal boundaries are deterministic. */
 function scenario(options = {}) {
   let time = 0;
   const game = GameEngine.create('Motion test', 'ZA', true),
@@ -26,9 +28,11 @@ function scenario(options = {}) {
   motion.frame(game);
   return { game, engine, motion, advance: (ms) => (time += ms) };
 }
+/** Complete funding through the engine so animation cases begin from a legal action state. */
 function deploy(engine) {
   engine.reinforce({ [engine.owned()[0].code]: engine.game.budget });
 }
+/** Force a legal capture with known dice so animation assertions do not depend on chance. */
 function conquer(engine) {
   const from = engine.owned()[0],
     to = engine.game.countries.find((c) => c.owner !== engine.current);
@@ -38,6 +42,8 @@ function conquer(engine) {
   return { from, to };
 }
 
+// Route geometry must place effects on the country endpoints while following the same visible
+// flight arc.
 test('SVG flight positions progress from the source through the arc to the destination', () => {
   const { game } = scenario(),
     from = game.countries[0],
@@ -58,6 +64,8 @@ test('SVG flight positions progress from the source through the arc to the desti
   assert.notEqual(missile.angle, 0);
 });
 
+// Both armies' losses must appear on their own markers without presentation code changing the
+// combat result.
 test('both countries receive their own exact casualty badge from the same dice phase', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -84,6 +92,7 @@ test('both countries receive their own exact casualty badge from the same dice p
   );
 });
 
+// A tied phase may show movement but must not claim casualties that never occurred.
 test('ties launch a visual missile without inventing casualties', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -99,6 +108,8 @@ test('ties launch a visual missile without inventing casualties', () => {
   for (const c of game.countries) assert.equal(casualtyMarkers(frame, c, { roster: true }), '');
 });
 
+// Old multiplayer snapshots must still reveal accurate losses when their explicit loss fields are
+// absent.
 test('older shared records recover casualties from board changes when loss metadata is missing', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -117,6 +128,7 @@ test('older shared records recover casualties from board changes when loss metad
   assert.equal(frame.roll.defenderLoss, 2);
 });
 
+// Casualty labels must not reveal the outcome before the roll or linger into a newer phase.
 test('casualties appear after the dice settle and finish before the label lifetime ends', () => {
   const label = { kind: 'label', start: DICE_ROLL_DURATION, duration: 1700, x: 10, y: 20 };
   assert.equal(motionPose(label, 500).opacity, 0);
@@ -130,6 +142,8 @@ test('casualties appear after the dice settle and finish before the label lifeti
   );
 });
 
+// The player's explicit animation preference must take precedence over the operating system
+// default.
 test('an explicit animation choice can override the system reduced-motion preference', () => {
   assert.equal(resolveReducedMotion('auto', true), true);
   assert.equal(resolveReducedMotion('full', true), false);
@@ -137,11 +151,14 @@ test('an explicit animation choice can override the system reduced-motion prefer
   assert.equal(resolveReducedMotion(null, false), false);
 });
 
+// Animation frames must visibly update SVG nodes and release their callback once the effect is
+// finished.
 test('the frame renderer advances real SVG transforms and stops after the flight completes', () => {
   const oldRequest = globalThis.requestAnimationFrame,
     oldCancel = globalThis.cancelAnimationFrame;
   let time = 0,
     next = 0;
+  // Control animation callbacks so elapsed time can advance without a real browser.
   const callbacks = new Map();
   globalThis.requestAnimationFrame = (callback) => {
     callbacks.set(++next, callback);
@@ -191,6 +208,8 @@ test('the frame renderer advances real SVG transforms and stops after the flight
   }
 });
 
+// Opening a saved battle must show its current route without replaying historical dice or
+// casualties.
 test('resuming an existing battle shows its route without replaying historical rolls', () => {
   const { game, engine } = scenario();
   deploy(engine);
@@ -207,6 +226,8 @@ test('resuming an existing battle shows its route without replaying historical r
   assert.equal(diceMotion(frame, restored.battle.pairs).className, '');
 });
 
+// Several unseen events must retain their own troop deltas rather than share only the latest board
+// difference.
 test('batched reinforcements and transfers report the exact changes from each event', () => {
   const { game, engine, motion } = scenario(),
     from = engine.owned()[0],
@@ -226,6 +247,8 @@ test('batched reinforcements and transfers report the exact changes from each ev
   assert.equal(JSON.stringify(game), before, 'presentation must not change the saved game');
 });
 
+// Transfer effects must show the recorded route and quantity without changing the saved soldier
+// counts.
 test('transfer squads carry the exact soldier count between the correct countries', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -244,6 +267,8 @@ test('transfer squads carry the exact soldier count between the correct countrie
   assert.equal(game.events.at(-1).amount, 3);
 });
 
+// An attack effect must use its launch force even when combat has already reduced the live source
+// army.
 test('attack squads use the force committed at launch even if a later roll already changed the army', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -263,6 +288,40 @@ test('attack squads use the force committed at launch even if a later roll alrea
   );
 });
 
+// Transport is cosmetic: distant attacks use planes while nearby routes and all transfers keep soldiers.
+test('attack transport follows geographic range without changing troop counts or movement timing', () => {
+  for (const [kind, fromCode, toCode, expected] of [
+    ['attack', 'ZA', 'JP', 'plane'],
+    ['attack', 'JP', 'ZA', 'plane'],
+    ['attack', 'GB', 'FR', 'soldier'],
+    ['attack', 'FJ', 'WS', 'soldier'],
+    ['transfer', 'ZA', 'JP', 'soldier'],
+  ]) {
+    const countries = [fromCode, toCode].map((code, owner) => ({
+      ...catalogue.find((country) => country.code === code),
+      owner,
+      army: 9,
+    }));
+    const frame = {
+      effects: [
+        { kind, from: fromCode, to: toCode, amount: 8, owner: 0, startedAt: 100, age: 0, scale: 1 },
+      ],
+    };
+    const before = JSON.stringify({ countries, frame });
+    const markup = mapEffects(frame, countries);
+    assert.ok(markup.includes(`data-unit-type="${expected}"`), `${kind}: ${fromCode} to ${toCode}`);
+    assert.match(markup, /data-troop-count="8"/);
+    assert.match(markup, /data-motion-duration="2000"/);
+    assert.equal(markup.includes('class="unit-plane"'), expected === 'plane');
+    assert.equal(markup.includes('class="unit-head"'), expected === 'soldier');
+    assert.doesNotMatch(markup, /data-motion-duration="2000" data-motion-rotate/);
+    assert.equal(mapEffects({ ...frame, reduced: true }, countries), '');
+    assert.equal(JSON.stringify({ countries, frame }), before);
+  }
+});
+
+// A replay opened at a transfer must be able to reconstruct the route without a preceding event in
+// memory.
 test('a replay starting with a transfer can animate its route without an earlier board snapshot', () => {
   const { game, engine } = scenario();
   deploy(engine);
@@ -281,6 +340,7 @@ test('a replay starting with a transfer can animate its route without an earlier
   assert.equal(frame.route.kind, 'transfer');
 });
 
+// Legacy transfers must remain visible by recovering the movement from saved country snapshots.
 test('older transfers without movement metadata still animate from their saved board changes', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -296,6 +356,7 @@ test('older transfers without movement metadata still animate from their saved b
   assert.equal(effect.amount, 2);
 });
 
+// Repeated rendering must preserve elapsed flight time and eventually remove an expired effect.
 test('redrawing a moving squad retains its original progress and the effect eventually disappears', () => {
   const { game, engine, motion, advance } = scenario();
   deploy(engine);
@@ -316,6 +377,8 @@ test('redrawing a moving squad retains its original progress and the effect even
   );
 });
 
+// Unrelated redraws must not restart a capture reward or leave duplicate country effects on the
+// map.
 test('redraws advance an effect instead of restarting or duplicating it', () => {
   const { game, engine, motion, advance } = scenario();
   deploy(engine);
@@ -341,6 +404,7 @@ test('redraws advance an effect instead of restarting or duplicating it', () => 
   assert.deepEqual(motion.frame(game).effects, []);
 });
 
+// A capture's route, losses and bonus must remain attached to the same factual battle participants.
 test('dice, loss effects and capture rewards stay tied to the correct countries', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -362,6 +426,8 @@ test('dice, loss effects and capture rewards stay tied to the correct countries'
   assert.match(mapEffects(frame, game.countries), /−4/);
 });
 
+// Fast-forward may shorten presentation only; it must not alter the stored outcome or gameplay
+// history.
 test('fast playback shortens visual effects while leaving game records unchanged', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -373,6 +439,8 @@ test('fast playback shortens visual effects while leaving game records unchanged
   assert.equal(JSON.stringify(game), before);
 });
 
+// Turning animations back on must not replay effects that were already consumed in reduced-motion
+// mode.
 test('reduced motion consumes events without particles, tumbling or a later backlog', () => {
   const { game, engine, motion } = scenario({ reducedMotion: true });
   deploy(engine);
@@ -389,6 +457,8 @@ test('reduced motion consumes events without particles, tumbling or a later back
   assert.equal(motion.frame(game).turn.player, engine.current);
 });
 
+// Scrubbing replay must animate the selected event without creating or editing factual campaign
+// events.
 test('replay animates only the selected event and never edits campaign history', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -403,6 +473,8 @@ test('replay animates only the selected event and never edits campaign history',
   assert.equal(motion.frame(game, { view: 'history', replay: index }).effects.length, 1);
 });
 
+// The win overlay must follow the final capture reveal and disappear rather than obscure the board
+// forever.
 test('the victory celebration follows the final dice and capture, then expires', () => {
   const { game, engine, motion, advance } = scenario();
   deploy(engine);
@@ -440,6 +512,8 @@ test('cosmetic dice cycle through faces and settle on the stored value without c
   }
 });
 
+// Visible pips and accessible announcements must finish on the saved face and stop requesting
+// frames.
 test('the mounted dice update visible pips, announce completion and stop their animation frame', () => {
   const oldRequest = globalThis.requestAnimationFrame,
     oldCancel = globalThis.cancelAnimationFrame;
@@ -498,37 +572,46 @@ test('the mounted dice update visible pips, announce completion and stop their a
   }
 });
 
-test('army counts, ownership, event outcomes and victory wait for the dice to settle without changing saved results', () => {
-  const { game, engine, motion, advance } = scenario();
-  deploy(engine);
-  for (const country of game.countries) country.owner = 0;
-  const enemy = game.countries[1];
-  enemy.owner = 1;
-  enemy.army = 1;
-  engine.event('campaign', 'The final opponent remains.');
-  motion.frame(game);
-  const before = structuredClone(game.countries);
-  conquer(engine);
-  const saved = JSON.stringify(game),
-    frame = motion.frame(game),
-    shown = presentationGame(game, frame);
-  assert.equal(rollPending(frame), true);
-  assert.deepEqual(shown.countries, before);
-  assert.equal(shown.winner, null);
-  assert.equal(shown.presentationPending, true);
-  assert.equal(
-    shown.events.some(
-      (event) => ['dice', 'conquest', 'victory'].includes(event.type) && event.id === frame.roll.id,
-    ),
-    false,
-  );
-  assert.equal(shown.events.at(-1).type, 'attack');
-  assert.equal(game.winner, 0);
-  assert.equal(JSON.stringify(game), saved);
-  advance(DICE_ROLL_DURATION);
-  assert.equal(presentationGame(game, motion.frame(game)), game);
-});
+// Presentation must conceal all outcome clues until dice finish while keeping the committed result
+// untouched.
+test(
+  'army counts, ownership, event outcomes and victory wait for the dice to' +
+    ' settle without changing saved results',
+  () => {
+    const { game, engine, motion, advance } = scenario();
+    deploy(engine);
+    for (const country of game.countries) country.owner = 0;
+    const enemy = game.countries[1];
+    enemy.owner = 1;
+    enemy.army = 1;
+    engine.event('campaign', 'The final opponent remains.');
+    motion.frame(game);
+    const before = structuredClone(game.countries);
+    conquer(engine);
+    const saved = JSON.stringify(game),
+      frame = motion.frame(game),
+      shown = presentationGame(game, frame);
+    assert.equal(rollPending(frame), true);
+    assert.deepEqual(shown.countries, before);
+    assert.equal(shown.winner, null);
+    assert.equal(shown.presentationPending, true);
+    assert.equal(
+      shown.events.some(
+        (event) =>
+          ['dice', 'conquest', 'victory'].includes(event.type) && event.id === frame.roll.id,
+      ),
+      false,
+    );
+    assert.equal(shown.events.at(-1).type, 'attack');
+    assert.equal(game.winner, 0);
+    assert.equal(JSON.stringify(game), saved);
+    advance(DICE_ROLL_DURATION);
+    assert.equal(presentationGame(game, motion.frame(game)), game);
+  },
+);
 
+// Fast and reduced-motion modes must reveal results according to their own clocks without
+// unnecessary waits.
 test('fast playback uses the shorter reveal clock and reduced motion shows results immediately', () => {
   const { game, engine, motion, advance } = scenario();
   deploy(engine);
@@ -545,6 +628,8 @@ test('fast playback uses the shorter reveal clock and reduced motion shows resul
   assert.equal(presentationGame(reduced.game, reduced.motion.frame(reduced.game)), reduced.game);
 });
 
+// Trimming shared history must not make a newly received roll look old or stop its serialized dice
+// animation.
 test('multiplayer history trimming retains the new roll and serialized dice still animate', () => {
   const { game, engine, motion } = scenario();
   deploy(engine);
@@ -556,6 +641,8 @@ test('multiplayer history trimming retains the new roll and serialized dice stil
   assert.equal(frame.roll.id, game.events.findLast((event) => event.type === 'dice').id);
   assert.equal(diceMotion(frame, structuredClone(frame.roll.pairs)).className, 'dice-rolling');
 });
+
+// Shared banners must address the viewer correctly and escape other players' recorded nicknames.
 test('multiplayer turn and victory banners use recorded nicknames and the viewing player seat', () => {
   const names = ['Host <Ace>', 'Friend & Rival'];
   const turn = { player: 0, round: 1, duration: 1650, age: 0 };

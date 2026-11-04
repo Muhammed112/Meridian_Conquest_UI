@@ -1,5 +1,7 @@
 import { firebaseCliAuth } from './firebase-admin-access.mjs';
-// One-time setup: dedicated updater credentials go only into GitHub Secrets.
+// Operator command: default execution provisions/rotates the dedicated updater's credentials.
+// --inspect and --status read settings; --dispatch starts the repository's updater workflow.
+// The updater credentials go only into GitHub Secrets and never grant gameplay administration.
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
@@ -7,6 +9,7 @@ import assert from 'node:assert/strict';
 import { firebaseConfig } from '../dist/firebase-config.js';
 const repo = 'Muhammed112/Meridian_Conquest_UI';
 let githubToken;
+/** Use the operator’s in-memory GitHub credential for this repository’s workflow setup. */
 async function github(route, method = 'GET', body) {
   const response = await fetch('https://api.github.com/repos/' + repo + route, {
     method,
@@ -22,6 +25,7 @@ async function github(route, method = 'GET', body) {
   if (!response.ok) throw new Error('GitHub ' + route + ' failed (HTTP ' + response.status + ').');
   return response.status === 204 ? null : response.json();
 }
+/** Inspect or provision the dedicated reference-data updater, never a gameplay administrator. */
 async function main() {
   let credential;
   try {
@@ -96,6 +100,7 @@ async function main() {
   };
   const email = 'population-updater@' + firebaseConfig.projectId + '.invalid',
     password = randomBytes(36).toString('base64url');
+  // Verify ownership of a pre-existing updater address before rotating its password or claims.
   const found = await api('/accounts:lookup', { email: [email] }),
     old = found.users?.[0];
   if (old && !JSON.parse(old.customAttributes || '{}').populationUpdater)
@@ -109,6 +114,7 @@ async function main() {
     password,
     customAttributes: JSON.stringify({ populationUpdater: true }),
   });
+  // Encrypt each secret with GitHub's repository key before sending it over the administration API.
   for (const [name, value] of Object.entries({
     POPULATION_UPDATER_EMAIL: email,
     POPULATION_UPDATER_PASSWORD: password,
@@ -126,8 +132,10 @@ async function main() {
     });
   }
   console.log(
-    'Dedicated population updater configured. Credentials encrypted in GitHub Secrets; no administrator token is stored.',
+    'Dedicated population updater configured. Credentials encrypted in GitHub' +
+      ' Secrets; no administrator token is stored.',
   );
+  // Verification uses a disposable ordinary player to prove publication remains updater-only.
   if (process.argv.includes('--verify')) {
     process.env.POPULATION_UPDATER_EMAIL = email;
     process.env.POPULATION_UPDATER_PASSWORD = password;
@@ -149,7 +157,9 @@ async function main() {
       return value.idToken;
     };
     const updaterToken = await signIn(email, password),
-      documents = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+      documents = /* prettier-ignore */ `https://firestore.googleapis.com/v1/projects/${
+        firebaseConfig.projectId
+      }/databases/(default)/documents`;
     for (const route of [`/users/${uid}/games/permission-check`, '/rooms/ZZZ999']) {
       const response = await fetch(documents + route, {
         headers: { Authorization: 'Bearer ' + updaterToken },
@@ -198,7 +208,8 @@ async function main() {
       if (fixture?.localId) await api('/accounts:delete', { localId: fixture.localId });
     }
     console.log(
-      'PASS: public reads; updater-only publication; updater gameplay access denied; player and anonymous writes denied; temporary account removed.',
+      'PASS: public reads; updater-only publication; updater gameplay access' +
+        ' denied; player and anonymous writes denied; temporary account removed.',
     );
   }
 }

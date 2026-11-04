@@ -5,19 +5,16 @@ import {
   commentaryContext,
   createGeminiGenerator,
   recentCommentaryTasks,
+  applyCommentary,
 } from './commentary.js?v=match-commentary-20261026-1';
 import { createRoomService } from './rooms.js';
 import { firebaseConfig } from './firebase-config.js';
 import { normalizeNickname } from './profile.js';
-import {
-  campaignRecord,
-  readCampaignRecord,
-  eventRecord,
-  readEventRecord,
-  factualEvent,
-} from './game-schema.js';
+import { createSpectatorService } from './spectators.js';
+import { CampaignStore } from './campaign-store.js';
 
 export const cloudEnabled = Boolean(firebaseConfig?.projectId);
+/** Compose account-scoped persistence, narration and sharing using an injectable Firebase SDK. */
 export async function connectCloud({
   onSession,
   onCommentary,
@@ -25,6 +22,8 @@ export async function connectCloud({
   onProfile = () => {},
   onAIStatus = () => {},
   onLoadState = () => {},
+  onShareError = () => {},
+  onCampaignState = () => {},
   config = firebaseConfig,
   aiSettings = aiConfig,
   loadSDK,
@@ -43,37 +42,31 @@ export async function connectCloud({
   // Refreshes keep the session; closing its tab/window clears the sign-in.
   await authSDK.setPersistence(auth, authSDK.browserSessionPersistence);
   const db = dbSDK.getFirestore(app);
-  const {
-    collection,
-    doc,
-    getDocs,
-    query,
-    orderBy,
-    writeBatch,
-    onSnapshot,
-    getDoc,
-    runTransaction,
-    serverTimestamp,
-  } = dbSDK;
+  const { collection, doc, onSnapshot, getDoc, runTransaction, serverTimestamp } = dbSDK;
   let user = null,
     ready = false,
     queue = Promise.resolve(),
     stops = [],
     generation = 0;
-  const known = new Set();
+  const campaigns = new CampaignStore({ db, sdk: dbSDK, timeout: loadTimeout });
+  const generateCommentary = createGeminiGenerator({ app, base, settings: aiSettings, loadSDK });
+  let preparation = null;
+  const savedReports = new Map();
+  const spectators = createSpectatorService({ db, sdk: dbSDK, getUser: () => user });
   let preference = true;
   try {
     preference = globalThis.localStorage?.getItem('meridian-ai-commentary') !== 'off';
   } catch {
     // Optional storage or browser capability is unavailable; retain the fallback.
   }
+  // Reports live outside immutable facts; room members read one shared report per event.
   const reportRef = (task) =>
     task.roomCode
       ? doc(db, 'rooms', task.roomCode, 'aiReportsV2', task.eventId)
       : doc(db, 'users', task.uid, 'games', task.gameId, 'aiReportsV2', task.eventId);
   const narrator = new CommentaryQueue({
     enabled: Boolean(aiSettings.enabled && preference),
-    generate: createGeminiGenerator({ app, base, settings: aiSettings, loadSDK }),
+    generate: generateCommentary,
     lookup: async (task) => {
       if (user?.uid !== task.uid) return null;
       const snap = await getDoc(reportRef(task));
@@ -85,6 +78,7 @@ export async function connectCloud({
         const ref = reportRef(task),
           snap = await tx.get(ref);
         if (user?.uid !== task.uid) return null;
+        // Another request may have finished first; retain its report instead of overwriting it.
         if (snap.exists()) return snap.data();
         const result = {
           eventId: task.eventId,
@@ -114,6 +108,7 @@ export async function connectCloud({
       return ready;
     },
     reload: () => loadAccount(user),
+    /** Use Firebase Authentication for sign-in, account creation or password-reset delivery. */
     async authenticate(kind, values) {
       const email = String(values.get('email') || '').trim(),
         password = String(values.get('password') || '');
@@ -128,6 +123,7 @@ export async function connectCloud({
       return authSDK.signInWithEmailAndPassword(auth, email, password);
     },
     signOut: () => authSDK.signOut(auth),
+    /** Update only the current account profile and reject stale account-change results. */
     async updateNickname(value) {
       const nickname = normalizeNickname(value),
         account = user;
@@ -139,6 +135,8 @@ export async function connectCloud({
       return nickname;
     },
     commentary: narrator,
+    spectators,
+    /** Queue recent unnarrated facts; callers enforce owner or multiplayer-host access. */
     requestCommentary(game, { roomCode } = {}) {
       if (!user || !ready) throw new Error('Sign in and wait for your campaign to load.');
       service.setCommentaryEnabled(true);
@@ -153,86 +151,89 @@ export async function connectCloud({
         // Optional storage or browser capability is unavailable; retain the fallback.
       }
       narrator.setEnabled(Boolean(aiSettings.enabled && value));
+      if (value) void service.prepareCommentary();
     },
+    campaignState: (id) => campaigns.state(id),
+    restoreCommentary(game) {
+      for (const event of game.events)
+        applyCommentary(event, savedReports.get(game.id + '/' + event.id));
+    },
+    /** Read only the selected history; a failure leaves every other campaign available. */
+    async openCampaign(id, options) {
+      const token = generation;
+      const pending = campaigns.open(id, options);
+      onCampaignState(id, campaigns.state(id));
+      try {
+        const game = await pending;
+        if (token !== generation) return null;
+        if (game) subscribe(id, token);
+        return game;
+      } finally {
+        if (token === generation) onCampaignState(id, campaigns.state(id));
+      }
+    },
+    /** Warm model/attestation and cached sign-in tokens without generating a report. */
+    prepareCommentary() {
+      if (!user || !ready || !narrator.enabled) return Promise.resolve();
+      preparation ??= Promise.all([user.getIdToken?.(), generateCommentary.prepare()]).catch(() => {
+        preparation = null;
+      });
+      return preparation;
+    },
+    /** Serialize local snapshots; compare-and-set prevents a second device overwriting a save. */
     save(games) {
       if (!user || !ready) return Promise.resolve();
       const uid = user.uid,
-        token = generation,
-        snapshot = JSON.parse(JSON.stringify(games));
+        token = generation;
+      // Capture this save now; later game mutations must not change a queued database write.
+      const snapshot = JSON.parse(JSON.stringify(games));
       const task = queue
         .catch(() => {})
         .then(async () => {
-          if (token !== generation) return;
+          let firstError;
           for (const game of snapshot) {
-            const gameRef = doc(db, 'users', uid, 'games', game.id);
-            const { events, ...board } = game;
-            const entries = [];
-            for (const [sequence, event] of events.entries()) {
-              const key = game.id + '/' + event.id;
-              if (known.has(key)) continue;
-              const facts = factualEvent(event);
-              const context = {
-                event: facts,
-                previousBoard: events[sequence - 1]?.board || null,
-                countries: game.countries.map((c) => ({ code: c.code, name: c.name })),
-                recent: events
-                  .slice(Math.max(0, sequence - 3), sequence)
-                  .map((e) => ({ type: e.type, text: e.text })),
-              };
-              entries.push([
-                doc(gameRef, 'events', event.id),
-                eventRecord(event, sequence, game, context),
-                key,
-                {
-                  key,
+            if (token !== generation) return;
+            try {
+              const events = await campaigns.save(game);
+              if (token !== generation) return;
+              narrator.enqueue(
+                events.map((event) => ({
+                  key: game.id + '/' + event.id,
                   uid,
                   gameId: game.id,
                   eventId: event.id,
                   context: commentaryContext(game, event),
-                },
-              ]);
-            }
-            // Publish the board only after all its immutable events are saved.
-            entries.push([gameRef, campaignRecord(board)]);
-            for (let offset = 0; offset < entries.length; offset += 400) {
+                })),
+              );
+              if (campaigns.state(game.id).status === 'ready') subscribe(game.id, token);
+              await spectators.publish(game).catch(onShareError);
+            } catch (error) {
               if (token !== generation) return;
-              const part = entries.slice(offset, offset + 400),
-                batch = writeBatch(db);
-              for (const [ref, data] of part) batch.set(ref, data);
-              await batch.commit();
-              if (token !== generation) return;
-              for (const [, , key] of part) if (key) known.add(key);
-              narrator.enqueue(part.filter((entry) => entry[3]).map((entry) => entry[3]));
+              firstError ??= error;
+              onCampaignState(game.id, campaigns.state(game.id));
             }
           }
+          if (firstError) throw firstError;
         });
       queue = task;
       return task;
     },
   };
   const watched = new Set();
-  function readCampaigns(target) {
-    let timer;
-    const deadline = new Promise((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            Object.assign(new Error('Campaign loading timed out'), { code: 'deadline-exceeded' }),
-          ),
-        loadTimeout,
-      );
-    });
-    return Promise.race([getDocs(target), deadline]).finally(() => clearTimeout(timer));
-  }
+  /** Restore validated board summaries only; histories remain lazy and individually retryable. */
   async function loadAccount(next) {
+    // Every account load invalidates the previous account's subscriptions and async results.
     const token = ++generation;
     ready = false;
     user = next;
+    preparation = null;
     narrator.reset();
-    known.clear();
+    savedReports.clear();
+    campaigns.reset(next?.uid || null);
     stops.forEach((stop) => stop());
     stops = [];
     watched.clear();
+    spectators.reset();
     onLoadState({ status: 'loading' });
     onSession(next, [], false);
     if (!next) {
@@ -241,41 +242,14 @@ export async function connectCloud({
       onLoadState({ status: 'ready' });
       return;
     }
+    // Sharing restores independently so a failed public-copy query never blocks private saves.
+    void spectators.restore().catch(onShareError);
     try {
-      const result = await readCampaigns(collection(db, 'users', next.uid, 'games'));
+      const { games, issues } = await campaigns.list();
       if (token !== generation) return;
-      const boards = result.docs.map((record) => ({
-        ...readCampaignRecord(record.data()),
-        events: [],
-      }));
-      // Show the campaign list before a long event history finishes downloading.
-      // Gameplay and saving remain locked until the complete history is loaded.
-      onSession(next, boards, false);
-      const games = await Promise.all(
-        result.docs.map(async (record, index) => {
-          const game = boards[index],
-            eventDocs = await readCampaigns(
-              query(collection(record.ref, 'events'), orderBy('sequence')),
-            );
-          return {
-            ...game,
-            events: eventDocs.docs.map((event) =>
-              readEventRecord(event.data(), new Set(game.countries.map((c) => c.code))),
-            ),
-          };
-        }),
-      );
-      if (token !== generation) return;
-      for (const game of games)
-        for (const event of game.events) known.add(game.id + '/' + event.id);
       ready = true;
-      onSession(
-        next,
-        games.sort((a, b) => b.updatedAt - a.updatedAt),
-        true,
-      );
-      onLoadState({ status: 'ready' });
-      for (const game of games) subscribe(game.id, token);
+      onSession(next, games, true);
+      onLoadState({ status: issues.length ? 'partial' : 'ready', issues });
     } catch (error) {
       if (token !== generation) return;
       onLoadState({ status: 'error', error });
@@ -286,6 +260,7 @@ export async function connectCloud({
     onLoadState({ status: 'error', error });
     onError(error);
   });
+  /** Subscribe once per campaign/session, retaining support for earlier narration collections. */
   function subscribe(id, token = generation) {
     const key = token + '/' + id;
     if (watched.has(key)) return;
@@ -297,27 +272,25 @@ export async function connectCloud({
           (snapshot) => {
             if (token !== generation) return;
             for (const change of snapshot.docChanges())
-              if (change.type !== 'removed')
-                onCommentary(id, change.doc.id, {
+              if (change.type !== 'removed') {
+                const result = {
                   ...change.doc.data(),
                   narrationVersion: source === 'aiReportsV2' ? COMMENTARY_VERSION : 0,
-                });
+                };
+                savedReports.set(id + '/' + change.doc.id, result);
+                onCommentary(id, change.doc.id, result);
+              }
           },
           onError,
         ),
       );
   }
-  const save = service.save;
-  service.save = async (games) => {
-    const token = generation;
-    await save(games);
-    if (token === generation && user && ready) for (const game of games) subscribe(game.id);
-  };
   service.rooms = createRoomService({
     db,
     sdk: dbSDK,
     getUser: () => user,
     onEvents: (code, room, game, events) => {
+      // Only the host submits model requests; friends consume the room's stored narration.
       if (user?.uid !== room.hostUid) return;
       narrator.enqueue(
         events.map((event) => ({

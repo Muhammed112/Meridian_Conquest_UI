@@ -1,0 +1,265 @@
+import { validateGameBoard, validateGameEvent } from './game-schema.js';
+import { normalizeCampaignCountries } from './country-compatibility.js';
+
+const gameFields = [
+  'id',
+  'name',
+  'start',
+  'difficulty',
+  'round',
+  'position',
+  'order',
+  'turnStarted',
+  'budget',
+  'attackUsed',
+  'winner',
+  'status',
+  'createdAt',
+  'updatedAt',
+  'playerNames',
+];
+const eventFields = [
+  'id',
+  'type',
+  'text',
+  'round',
+  'player',
+  'at',
+  'from',
+  'to',
+  'country',
+  'phase',
+  'amount',
+  'reward',
+  'attackerLoss',
+  'defenderLoss',
+  'commentary',
+  'commentaryVersion',
+];
+const battleFields = [
+  'from',
+  'to',
+  'phase',
+  'outcome',
+  'country',
+  'reward',
+  'attackerLoss',
+  'defenderLoss',
+];
+const pick = (source, fields) =>
+  Object.fromEntries(
+    fields.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]),
+  );
+const board = (countries) => countries.map((country) => pick(country, ['code', 'owner', 'army']));
+const pairs = (values) => values.map((pair, index) => ({ index: index + 1, a: pair.a, d: pair.d }));
+const battle = (value) =>
+  value ? { ...pick(value, battleFields), pairs: pairs(value.pairs || []) } : null;
+
+/** Copy public pact history explicitly so future private negotiation fields never leak. */
+function publicDiplomacy(event) {
+  const state = event.diplomacyState;
+  return {
+    ...(state
+      ? {
+          diplomacyState: {
+            alliances: state.alliances.map((alliance) => ({
+              ...pick(alliance, ['startedRound', 'expiresRound']),
+              players: [...alliance.players],
+            })),
+            trust: state.trust.map((entry) => pick(entry, ['observer', 'other', 'value'])),
+            lastOffers: state.lastOffers.map((entry) => pick(entry, ['player', 'round'])),
+          },
+        }
+      : {}),
+    ...(event.diplomacy
+      ? {
+          diplomacy: pick(event.diplomacy, [
+            'action',
+            'proposer',
+            'target',
+            'reason',
+            'expiresRound',
+          ]),
+        }
+      : {}),
+  };
+}
+
+// An explicit public projection prevents account details or future private fields leaking.
+function publicGame(game) {
+  return {
+    ...pick(game, gameFields),
+    ...(game.populationSource
+      ? {
+          populationSource: {
+            ...(typeof game.populationSource.source === 'string'
+              ? { source: game.populationSource.source }
+              : {}),
+            ...(Number.isInteger(game.populationSource.year)
+              ? { year: game.populationSource.year }
+              : {}),
+            ...(typeof game.populationSource.fetchedAt === 'string'
+              ? { fetchedAt: game.populationSource.fetchedAt }
+              : {}),
+          },
+        }
+      : {}),
+    countries: game.countries.map((country) =>
+      pick(country, ['code', 'owner', 'army', 'population', 'value']),
+    ),
+    battle: battle(game.battle),
+    lastBattle: battle(game.lastBattle),
+    events: game.events.slice(-60).map((event) => ({
+      ...pick(event, eventFields),
+      ...publicDiplomacy(event),
+      at: Number.isFinite(event.at) ? event.at : 0,
+      board: board(event.board),
+      ...(event.pairs ? { pairs: pairs(event.pairs) } : {}),
+    })),
+  };
+}
+
+/** Encode a public allowlist and trim older events to fit the shared-document size limit. */
+export function spectatorPayload(game) {
+  validateGameBoard(game);
+  const codes = new Set(game.countries.map((country) => country.code));
+  // Validate nested facts before projecting; stripping fields must not disguise malformed state.
+  for (const event of game.events) validateGameEvent(event, codes);
+  const shared = publicGame(game);
+  let payload = JSON.stringify(shared);
+  while (new TextEncoder().encode(payload).length > 500000 && shared.events.length > 1) {
+    shared.events.shift();
+    payload = JSON.stringify(shared);
+  }
+  readSpectatorGame(payload);
+  return payload;
+}
+
+/** Validate public facts and strip arbitrary fields before any visitor renders the board. */
+export function readSpectatorGame(payload) {
+  if (typeof payload !== 'string' || new TextEncoder().encode(payload).length > 500000)
+    throw new Error('This live game is too large or invalid.');
+  const game = validateGameBoard(JSON.parse(payload));
+  if (!Array.isArray(game.events) || game.events.length > 60)
+    throw new Error('Invalid live game history.');
+  const codes = new Set(game.countries.map((country) => country.code));
+  for (const event of game.events) {
+    validateGameEvent(event, codes);
+    for (const field of ['from', 'to', 'country'])
+      if (event[field] !== undefined && !codes.has(event[field]))
+        throw new Error('Invalid country in live event.');
+    if (
+      ['attack', 'dice'].includes(event.type) &&
+      (!codes.has(event.from) || !codes.has(event.to) || event.from === event.to)
+    )
+      throw new Error('Invalid live battle.');
+    if (event.type === 'dice' && (!Array.isArray(event.pairs) || !event.pairs.length))
+      throw new Error('Invalid live dice.');
+  }
+  if (new Set(game.events.map((event) => event.id)).size !== game.events.length)
+    throw new Error('Invalid live game history.');
+  // Rendering flags and arbitrary fields from public documents are never trusted.
+  return normalizeCampaignCountries(validateGameBoard(publicGame(game)));
+}
+
+/** Publish owner-authorized copies and provide read-only subscriptions for anonymous visitors. */
+export function createSpectatorService({ db, sdk, getUser }) {
+  const active = new Set();
+  let generation = 0,
+    queue = Promise.resolve();
+  const target = (id) => {
+    if (!/^[\w-]{1,60}$/.test(id || '')) throw new Error('Invalid live game link.');
+    return sdk.doc(db, 'liveGames', id);
+  };
+  /** Serialize sharing/revocation and reject queued work from an earlier account session. */
+  function write(task) {
+    const token = generation,
+      uid = getUser()?.uid;
+    if (!uid) return Promise.reject(new Error('Sign in to share your campaign.'));
+    const next = queue
+      .catch(() => {})
+      .then(() => {
+        if (token !== generation || uid !== getUser()?.uid)
+          throw new Error('Your account changed. Please try again.');
+        return task(uid);
+      });
+    queue = next;
+    return next;
+  }
+  /** Capture this public board before queueing so later gameplay cannot alter the pending copy. */
+  function publish(game) {
+    const payload = spectatorPayload(game);
+    return write((ownerUid) => {
+      if (!active.has(game.id)) return;
+      return sdk.setDoc(target(game.id), {
+        version: 1,
+        ownerUid,
+        gameId: game.id,
+        payload,
+        updatedAt: sdk.serverTimestamp(),
+      });
+    });
+  }
+  return {
+    isShared: (id) => active.has(id),
+    /** Forget this account’s opt-ins and invalidate queued writes without deleting shared games. */
+    reset() {
+      generation++;
+      active.clear();
+    },
+    /** Restore only this owner’s explicit shares after sign-in, ignoring stale reads. */
+    async restore(read = sdk.getDocs) {
+      const uid = getUser()?.uid,
+        token = generation;
+      if (!uid) return;
+      const records = await read(
+        sdk.query(sdk.collection(db, 'liveGames'), sdk.where('ownerUid', '==', uid)),
+      );
+      if (token !== generation || uid !== getUser()?.uid) return;
+      for (const record of records.docs) if (record.data().ownerUid === uid) active.add(record.id);
+    },
+    /** Opt in only if the first publication succeeds; keep existing shares retryable. */
+    async start(game) {
+      const wasShared = active.has(game.id);
+      active.add(game.id);
+      try {
+        await publish(game);
+      } catch (error) {
+        if (!wasShared) active.delete(game.id);
+        throw error;
+      }
+    },
+    /** Update an already shared campaign; ordinary saves never opt a new game in. */
+    async publish(game) {
+      return active.has(game.id) ? publish(game) : Promise.resolve();
+    },
+    /**
+     * Disable automatic publication before deleting the mirror, restoring retry controls on
+     * failure.
+     */
+    stop(id) {
+      const wasShared = active.has(id);
+      // Disable publication immediately so already queued saves cannot recreate a revoked share.
+      active.delete(id);
+      const token = generation;
+      return write(() => sdk.deleteDoc(target(id))).catch((error) => {
+        if (wasShared && token === generation) active.add(id);
+        throw error;
+      });
+    },
+    /** Observe one public game; a missing document signals revoked sharing. */
+    watch(id, onChange, onError) {
+      return sdk.onSnapshot(
+        target(id),
+        (snapshot) => {
+          try {
+            onChange(snapshot.exists() ? readSpectatorGame(snapshot.data().payload) : null);
+          } catch (error) {
+            onError(error);
+          }
+        },
+        onError,
+      );
+    },
+  };
+}

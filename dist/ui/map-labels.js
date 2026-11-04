@@ -1,5 +1,6 @@
 let labelObserver;
 
+/** Treat dots and labels as padded rectangles when searching for a readable label position. */
 function overlaps(a, b, gap) {
   return (
     a.x < b.x + b.width + gap &&
@@ -9,15 +10,18 @@ function overlaps(a, b, gap) {
   );
 }
 
+/** Move crowded labels into nearby free space, keeping dots fixed and connecting moved labels. */
 function separateLabels(svg) {
   const { width: mapWidth, height: mapHeight } = svg.viewBox.baseVal;
   const scale = Math.min(svg.clientWidth / mapWidth, svg.clientHeight / mapHeight);
   if (!scale) return;
+  // Convert the desired screen-space gap to SVG units so small maps retain readable spacing.
   const gap = 3 / scale;
   const markers = [...svg.querySelectorAll('.map-marker')].flatMap((marker) => {
     const text = marker.querySelector('text');
     if (!text) return [];
     const circle = marker.querySelector('circle:not(.selection-ring)');
+    // Start from original coordinates on every resize; offsets must not accumulate over time.
     text.dataset.labelX ??= text.getAttribute('x');
     text.dataset.labelY ??= text.getAttribute('y');
     text.setAttribute('x', text.dataset.labelX);
@@ -34,7 +38,6 @@ function separateLabels(svg) {
       },
     ];
   });
-  if (!svg.closest('.reports-map-compact')) return;
   const dots = markers.map(({ x, y, radius }) => ({
     x: x - radius,
     y: y - radius,
@@ -85,6 +88,7 @@ function separateLabels(svg) {
   }
 }
 
+/** Replace old resize observers and recalculate labels after resizing or font loading. */
 export function syncMapLabels(root) {
   labelObserver?.disconnect();
   const maps = [...root.querySelectorAll('.world-map')].filter((svg) =>
@@ -99,6 +103,7 @@ export function syncMapLabels(root) {
     for (const target of [svg, ...svg.querySelectorAll('.map-marker text')])
       labelObserver.observe(target);
   const ownerDocument = root.ownerDocument || root;
+  // Font metrics can change after the first render and invalidate earlier overlap measurements.
   if (ownerDocument.fonts.status === 'loading')
     void ownerDocument.fonts.ready.then(() => {
       for (const svg of maps) if (svg.isConnected) separateLabels(svg);

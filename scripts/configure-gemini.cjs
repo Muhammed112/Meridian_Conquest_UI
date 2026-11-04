@@ -5,19 +5,15 @@ const fs = require('node:fs/promises');
 const project = 'meridian-conquest-m112',
   number = '126865630748',
   app = '1:126865630748:web:2fdd0ba05023a30c64e1d9';
+/** Configure Spark-compatible App Check and public settings; no secret key is written to dist. */
 async function main() {
-  const { firebaseCliAuth } = await import('./firebase-admin-access.mjs');
-  const auth = firebaseCliAuth();
-  const account = auth.getGlobalDefaultAccount();
-  if (!account) throw new Error('Run npx firebase login first');
-  const token = (
-    await auth.getAccessToken(account.tokens.refresh_token, [
-      'https://www.googleapis.com/auth/cloud-platform',
-    ])
-  ).access_token;
+  const { firebaseAdminToken } = await import('./firebase-admin-access.mjs');
+  const token = await firebaseAdminToken();
+  /** Keep administration requests bounded and preserve status codes needed for setup fallbacks. */
   async function api(url, method = 'GET', body) {
     const response = await fetch(url, {
       method,
+      signal: AbortSignal.timeout(20000),
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -29,6 +25,7 @@ async function main() {
     }
     return data;
   }
+  // Refuse an unexpected paid-project setup rather than silently changing the agreed Spark workflow.
   const billing = await api(
     'https://cloudbilling.googleapis.com/v1/projects/' + project + '/billingInfo',
   );
@@ -59,6 +56,7 @@ async function main() {
   } catch (error) {
     if (error.status !== 404) throw error;
   }
+  // Reuse a configured or named key so rerunning setup does not create redundant reCAPTCHA keys.
   if (!siteKey) {
     const keyUrl = 'https://recaptchaenterprise.googleapis.com/v1/projects/' + project + '/keys';
     const keys = await api(keyUrl);
@@ -117,10 +115,12 @@ async function main() {
     restrictions: { ...restrictions, apiTargets: targets },
   });
   console.log('Public Firebase key restricted to Firebase services.');
+  // The site key is public attestation configuration; the administrator credential stays in memory.
   const config = { enabled: true, model: 'gemini-3.5-flash-lite', siteKey };
   await fs.writeFile(
     path.join(__dirname, '../dist/ai-config.js'),
-    '// Public Gemini/App Check configuration. No secret API key belongs here.\nexport const aiConfig = ' +
+    '// Public Gemini/App Check configuration. No secret API key belongs' +
+      ' here.\nexport const aiConfig = ' +
       JSON.stringify(config, null, 2) +
       ';\n',
   );

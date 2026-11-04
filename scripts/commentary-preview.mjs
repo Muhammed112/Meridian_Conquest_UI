@@ -9,6 +9,7 @@ import { aiConfig } from '../dist/ai-config.js';
 import { GameEngine } from '../dist/engine.js';
 import { commentaryContext, parseCommentaryBatch } from '../dist/commentary.js';
 
+/** Make bounded fixture/auth requests without logging their tokens or request bodies. */
 async function json(url, body, headers = {}) {
   const response = await fetch(url, {
     method: 'POST',
@@ -23,6 +24,7 @@ async function json(url, body, headers = {}) {
 }
 const auth = (method, body) =>
   json(`https://identitytoolkit.googleapis.com/v1/accounts:${method}?key=${config.apiKey}`, body);
+/** Build a recorded battle with known losses so narration can be checked against facts. */
 function pressureFixture(player) {
   const battle = GameEngine.create('Narration fixture', 'ZA', true),
     engine = new GameEngine(battle),
@@ -40,6 +42,37 @@ function pressureFixture(player) {
   engine.roll(() => rolls.shift());
   return { battle, engine, event: battle.events.at(-1) };
 }
+/** Exercise recorded outcomes independently so later victory facts cannot leak into earlier reports. */
+function outcomeFixture(type) {
+  const game = GameEngine.create('Outcome fixture', 'ZA', true);
+  Object.assign(game, {
+    round: 1,
+    position: game.order.indexOf(1),
+    budget: 0,
+    events: [],
+    battle: null,
+    attackUsed: false,
+  });
+  if (type === 'victory')
+    game.countries.forEach((country, index) => {
+      country.owner = index === 2 ? 2 : 1;
+    });
+  const attacker = game.countries[1],
+    defender = game.countries[2],
+    engine = new GameEngine(game);
+  attacker.army = type === 'held' ? 2 : 6;
+  defender.army = 1;
+  engine.event('turn', 'A new turn.');
+  engine.startAttack(attacker.code, defender.code);
+  if (type === 'retreat') engine.stopAttack();
+  else {
+    let roll = 0;
+    engine.roll(() => (++roll % 2 ? (type === 'held' ? 1 : 6) : type === 'held' ? 6 : 1));
+  }
+  const event = game.events.findLast((item) => item.type === type);
+  assert.ok(event, 'The engine must record the requested outcome.');
+  return { eventId: event.id, context: commentaryContext(game, event) };
+}
 let user, browser;
 try {
   const credentials = {
@@ -48,6 +81,7 @@ try {
     returnSecureToken: true,
   };
   user = await auth('signUp', credentials);
+  // Include both sides of a match and recorded outcomes so quality checks do not favour the human seat.
   const { battle, engine, event: pressure } = pressureFixture(0);
   const tasks = [{ eventId: pressure.id, context: commentaryContext(battle, pressure) }];
   engine.roll(() => 3);
@@ -76,6 +110,8 @@ try {
   leader.roll(() => (++n % 2 ? 6 : 1));
   const capture = lead.events.findLast((event) => event.type === 'conquest');
   tasks.push({ eventId: capture.id, context: commentaryContext(lead, capture) });
+  for (const type of ['retreat', 'held', 'elimination', 'victory'])
+    tasks.push(outcomeFixture(type));
   browser = await chromium.launch({
     headless: true,
   });
@@ -89,7 +125,7 @@ try {
   await page.locator('#email').fill(credentials.email);
   await page.locator('#password').fill(credentials.password);
   await page.locator('#auth-form button[type="submit"]').click();
-  await page.waitForURL('**/#campaigns');
+  await page.waitForURL(/#(?:campaigns|tutorial)/);
   page.on('response', async (response) => {
     if (response.url().includes('firebasevertexai.googleapis.com') && response.status() >= 400) {
       const data = await response.json().catch(() => ({}));
@@ -99,7 +135,7 @@ try {
   const selectedModel = process.env.COMMENTARY_PREVIEW_MODEL || aiConfig.model;
   const start = Date.now();
   console.log(
-    'Requesting ' + selectedModel + ' on human pressure, stalemate and bot battle fixtures.',
+    'Requesting ' + selectedModel + ' on human/bot combat, stalemate and recorded outcomes.',
   );
   const raw = await page.evaluate(
     async ({ tasks, selectedModel }) => {
@@ -108,17 +144,36 @@ try {
         import('./commentary.js?v=match-commentary-20261026-1'),
         import('./ai-config.js'),
       ]);
-      return createGeminiGenerator({
+      const generate = createGeminiGenerator({
         app: getApp(),
         base: 'https://www.gstatic.com/firebasejs/13.0.0/',
         settings: { ...aiConfig, model: selectedModel },
-      })(tasks);
+      });
+      const responses = [];
+      for (let index = 0; index < tasks.length; index += 6)
+        responses.push(await generate(tasks.slice(index, index + 6)));
+      return responses;
     },
     { tasks, selectedModel },
   );
-  const reports = parseCommentaryBatch(raw, tasks);
+  // Run actual responses through the application's factual gate, not just the provider's JSON parser.
+  const reports = new Map(
+    raw.flatMap((response, index) => [
+      ...parseCommentaryBatch(response, tasks.slice(index * 6, index * 6 + 6)),
+    ]),
+  );
   assert.equal(reports.size, tasks.length);
-  const labels = ['Human pressure', 'Stalemate', 'Bot pressure', 'Bot lead change'];
+  const labels = [
+    'Human pressure',
+    'Stalemate',
+    'Bot pressure',
+    'Bot lead change',
+    'Retreat',
+    'Defence holds',
+    'Elimination',
+    'Victory',
+  ];
+  // Check whole-match perspective and premature outcome claims against each event's original facts.
   for (const [index, task] of tasks.entries()) {
     const text = reports.get(task.eventId);
     console.log(labels[index] + ': ' + text);

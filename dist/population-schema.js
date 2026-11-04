@@ -6,10 +6,12 @@ export const POPULATION_SCHEMA_VERSION = 2;
 export const populationCountries = Object.freeze(
   Object.fromEntries(countryMetadata.map((country) => [country.code, country.populationSlug])),
 );
+/** Accept only a complete, dated snapshot from the assignment’s population source. */
 export function validatePopulationSnapshot(value, now = Date.now(), { allowLegacy = false } = {}) {
   const invalid = () => {
     throw new Error('Population data failed validation; keeping the previous snapshot.');
   };
+  // Legacy snapshots cover fewer countries and are accepted only as a comparison baseline.
   const legacy = allowLegacy && value?.version === 1,
     codes = legacy
       ? legacyCountries.map((country) => country.code)
@@ -44,6 +46,10 @@ export function validatePopulationSnapshot(value, now = Date.now(), { allowLegac
     populations,
   };
 }
+/**
+ * Reject older or implausibly changed data so automatic refreshes retain the last good
+ * snapshot.
+ */
 export function validatePopulationUpdate(candidate, previous, now = Date.now()) {
   const next = validatePopulationSnapshot(candidate, now),
     old = validatePopulationSnapshot(previous, now, { allowLegacy: true });

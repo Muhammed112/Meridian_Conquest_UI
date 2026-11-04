@@ -5,8 +5,7 @@ import { chromium } from './lib/browser.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { startTestServer } from './lib/static-server.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { firebaseConfig as config } from '../dist/firebase-config.js';
@@ -19,12 +18,16 @@ let browser,
   roomCode = '',
   debugName,
   admin;
-const appCheck = `https://firebaseappcheck.googleapis.com/v1/projects/126865630748/apps/${encodeURIComponent(config.appId)}`;
+const appCheck = /* prettier-ignore */ `https://firebaseappcheck.googleapis.com/v1/projects/126865630748/apps/${
+  encodeURIComponent(config.appId)
+}`;
 const debugToken = randomUUID();
 const base = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents`;
+/** Assert live room/auth responses without printing tokens or temporary passwords. */
 async function api(url, { method = 'GET', body, token, status = 200 } = {}) {
   const response = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(30000),
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -70,46 +73,30 @@ try {
     users.push({ ...result, credentials });
     await auth('update', { idToken: result.idToken, displayName: name });
   }
-  const root = path.resolve('dist');
-  server = createServer(async (req, res) => {
-    try {
-      const file = path.resolve(
-        root,
-        '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname),
-      );
-      if (file !== root && !file.startsWith(root + path.sep)) {
-        res.writeHead(403).end();
-        return;
-      }
-      const target = file === root ? path.join(root, 'index.html') : file;
-      const types = {
-        '.js': 'text/javascript',
-        '.css': 'text/css',
-        '.html': 'text/html',
-        '.svg': 'image/svg+xml',
-        '.mp3': 'audio/mpeg',
-        '.ogg': 'audio/ogg',
-      };
-      res.writeHead(200, {
-        'Content-Type': types[path.extname(target)] || 'application/octet-stream',
-      });
-      res.end(await readFile(target));
-    } catch {
-      res.writeHead(404).end();
-    }
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  server = await startTestServer();
   const origin = process.env.MULTIPLAYER_TEST_ORIGIN || 'http://localhost:' + server.address().port;
   browser = await chromium.launch({
     headless: true,
   });
+  // Separate browser contexts model independent players rather than sharing one authenticated tab.
   const contexts = await Promise.all([
     browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 1000 } }),
     browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } }),
   ]);
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
-  for (const page of pages) {
+  for (const [index, page] of pages.entries()) {
     page.on('pageerror', (error) => errors.push(error.message));
+    // Make only the one-byte opening rolls deterministic; leave longer authentication randomness intact.
+    await page.addInitScript((index) => {
+      const original = crypto.getRandomValues.bind(crypto);
+      crypto.getRandomValues = (bytes) => {
+        if (bytes.length === 1) {
+          bytes[0] = index === 1 ? 5 : 0;
+          return bytes;
+        }
+        return original(bytes);
+      };
+    }, index);
     if (skipAI)
       await page.addInitScript(() => localStorage.setItem('meridian-ai-commentary', 'off'));
   }
@@ -136,7 +123,7 @@ try {
     await page.locator('#password').fill(users[i].credentials.password);
     await page.locator('#auth-form button[type="submit"]').click();
     try {
-      await page.waitForURL('**/#campaigns');
+      await page.waitForURL(/#(?:campaigns|tutorial)/);
     } catch (error) {
       console.log(
         'Sign-in error:',
@@ -168,6 +155,7 @@ try {
   assert.equal(await host.locator('.room-bot').count(), 8);
   assert.equal(await friend.locator('[data-room-action="start"]').count(), 0);
   console.log('PASS: code joining updates both lobbies and reserves eight bot seats');
+  // Deliberate direct writes prove server rules reject impersonation independently of disabled buttons.
   const lobbyRecord = await api(`${base}/rooms/${roomCode}`, { token: users[0].idToken });
   await api(`${base}/rooms/${roomCode}`, { status: 403 });
   const forged = structuredClone(lobbyRecord.fields);
@@ -181,12 +169,57 @@ try {
     status: 403,
   });
   console.log('PASS: anonymous room reads and another member impersonation are denied');
-  await host.locator('[data-room-action="start"]').click();
-  await friend.locator('.room-country').first().waitFor();
-  await host.locator('.room-country').first().waitFor();
-  assert.equal(await friend.locator('.room-country').count(), 10);
-  await friend.locator('[data-room-form="attack"]').waitFor();
-  assert.equal(await host.locator('[data-room-form="attack"]').count(), 0);
+  for (const [page, country] of [
+    [host, 'ZA'],
+    [friend, 'JP'],
+  ]) {
+    await page.locator('#room-starting-country').fill(country);
+    await page.locator('[data-room-form="country"] button').click();
+    const other = page === host ? friend : host;
+    try {
+      await other.waitForFunction(
+        (country) => !document.querySelector(`#room-country-options option[label="${country}"]`),
+        country,
+      );
+    } catch (error) {
+      console.log(
+        'Country confirmation error:',
+        await page.locator('.room-error').allTextContents(),
+      );
+      throw error;
+    }
+  }
+  console.log('PASS: both players confirm distinct countries and see each other’s reservations');
+  await host.locator('[data-room-action="prepare"]:enabled').click();
+  await host.locator('[data-room-action="opening-roll"]').click();
+  // Wait for the first roll's remote redraw before clicking the other browser's button.
+  for (const page of pages)
+    await page.locator('.room-opening-grid .room-seat').nth(0).locator('.die').waitFor();
+  await friend.locator('[data-room-action="opening-roll"]').click();
+  for (const page of pages)
+    await page.locator('.room-opening-grid .room-seat').nth(1).locator('.die').waitFor();
+  console.log('PASS: both browsers receive each player’s opening die');
+  try {
+    await host.locator('[data-room-action="start"]').click();
+  } catch (error) {
+    const saved = await api(`${base}/rooms/${roomCode}`, { token: users[0].idToken });
+    const setup = saved.fields.initiative?.mapValue.fields;
+    console.log('Opening round diagnostics:', {
+      status: saved.fields.status.stringValue,
+      faces: Object.values(setup?.rolls.mapValue.fields || {}).map((face) => face.integerValue),
+      contenders: setup?.contenders.arrayValue.values.length,
+      hasWinner: Boolean(setup?.winner.stringValue),
+      messages: await Promise.all(
+        pages.map((page) => page.locator('.room-error').allTextContents()),
+      ),
+    });
+    throw error;
+  }
+  await friend.locator('.country-row').first().waitFor();
+  await host.locator('.country-row').first().waitFor();
+  assert.equal(await friend.locator('.country-row').count(), 10);
+  await friend.locator('[data-action="start-attack"]').waitFor();
+  assert.equal(await host.locator('[data-action="start-attack"]').count(), 0);
   const record = await api(`${base}/rooms/${roomCode}`, { token: users[0].idToken });
   await api(`${base}/rooms/${roomCode}`, {
     token: users[0].idToken,
@@ -197,12 +230,13 @@ try {
   console.log(
     'PASS: only the active friend has controls; Firestore denies an out-of-turn host write',
   );
-  await friend.locator('[data-room-form="attack"] button').click();
-  await friend.locator('[data-room-action="roll"]').waitFor();
-  await friend.locator('[data-room-action="roll"]').click();
-  await friend.locator('.room-dice').waitFor();
-  await host.locator('.room-dice').waitFor();
+  await friend.locator('[data-action="start-attack"]').click();
+  await friend.locator('[data-action="roll"]').waitFor();
+  await friend.locator('[data-action="roll"]').click();
+  await friend.locator('.action-panel .dice-pairs').waitFor();
+  await host.locator('.action-panel .dice-pairs').waitFor();
   console.log('PASS: friend attacks and both clients receive dice results');
+  // One host generates shared reports; the friend's browser must subscribe without spending model quota.
   if (!skipAI) {
     for (const page of [host, friend])
       await page.getByRole('tab', { name: 'AI commentary', exact: true }).click();
@@ -244,15 +278,16 @@ try {
       status: 403,
     });
     console.log(
-      'PASS: host generates shared Gemini reports; friends receive them without model requests and cannot overwrite them',
+      'PASS: host generates shared Gemini reports; friends receive them without' +
+        ' model requests and cannot overwrite them',
     );
   } else {
     assert.equal(friendAIRequests, 0);
     console.log('PASS: gameplay verification runs with AI requests disabled');
   }
   await friend.reload();
-  await friend.locator('.room-country').first().waitFor();
-  assert.equal(await friend.locator('.room-country').count(), 10);
+  await friend.locator('.country-row').first().waitFor();
+  assert.equal(await friend.locator('.country-row').count(), 10);
   await host.screenshot({
     path: path.join(os.tmpdir(), 'meridian-multiplayer-desktop.png'),
     fullPage: true,
@@ -265,14 +300,10 @@ try {
     () => document.documentElement.scrollWidth > window.innerWidth + 1,
   );
   assert.equal(mobileOverflow, false, 'Mobile page overflows horizontally');
-  if (await friend.locator('[data-room-action="retreat"]').count())
-    await friend.locator('[data-room-action="retreat"]').click();
-  else await friend.locator('[data-room-action="end"]').click();
-  await host
-    .locator('.room-board-grid .event-meta')
-    .filter({ hasText: 'DECISION' })
-    .first()
-    .waitFor();
+  if (await friend.locator('[data-action="stop-attack"]').count())
+    await friend.locator('[data-action="stop-attack"]').click();
+  else await friend.locator('[data-action="end-turn"]').first().click();
+  await host.locator('.board-grid .event-meta').filter({ hasText: 'DECISION' }).first().waitFor();
   console.log(
     'PASS: the host automatically advances bot decisions after the friend ends their turn',
   );
@@ -286,6 +317,8 @@ try {
 } finally {
   await browser?.close();
   if (server) await new Promise((resolve) => server.close(resolve));
+  // Cleanup is restricted to this run's room, disposable users and optional debug attestation.
+  // Preserve a cleanup failure as a failed run instead of concealing leaked fixtures behind a PASS.
   let cleanupError;
   try {
     if (roomCode) {

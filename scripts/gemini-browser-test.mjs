@@ -5,9 +5,7 @@ import { chromium } from './lib/browser.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import { startTestServer } from './lib/static-server.mjs';
 import { firebaseConfig as config } from '../dist/firebase-config.js';
 import { aiConfig } from '../dist/ai-config.js';
 import { GameEngine } from '../dist/engine.js';
@@ -20,7 +18,10 @@ const account = cli.getGlobalDefaultAccount(),
     ])
   ).access_token;
 const base = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents`;
-const appCheck = `https://firebaseappcheck.googleapis.com/v1/projects/126865630748/apps/${encodeURIComponent(config.appId)}`;
+const appCheck = /* prettier-ignore */ `https://firebaseappcheck.googleapis.com/v1/projects/126865630748/apps/${
+  encodeURIComponent(config.appId)
+}`;
+// These fixture fields are deliberately simple legacy scalars, encoded as Firestore REST values.
 const fields = (value) =>
   Object.fromEntries(
     Object.entries(value).map(([k, v]) => [
@@ -32,9 +33,12 @@ let user, browser, server, debugName, gamePath;
 const debugToken = randomUUID(),
   errors = [];
 let requests = 0;
+const gamePaths = new Set();
+/** Assert live API responses while restricting fixtures to this test’s temporary account. */
 async function api(url, { method = 'GET', token, body, status = 200 } = {}) {
   const response = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(20000),
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -42,12 +46,22 @@ async function api(url, { method = 'GET', token, body, status = 200 } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json().catch(() => ({}));
-  assert.equal(
-    response.status,
-    status,
-    `${new URL(url).pathname}: ${data.error?.message || response.status}`,
+  const accepted = Array.isArray(status) ? status : [status];
+  assert.ok(
+    accepted.includes(response.status),
+    `${new URL(url).pathname}: ${data.error?.message || response.status} (HTTP ${response.status})`,
   );
   return data;
+}
+/** Confirm the asynchronous save reached Firestore rather than a browser's local view. */
+async function waitForSavedCampaign(path) {
+  const deadline = Date.now() + 30000;
+  do {
+    const record = await api(base + '/' + path, { token: user.idToken, status: [200, 404] });
+    if (record.fields) return record;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
+  assert.fail('The new campaign did not reach Firestore within thirty seconds.');
 }
 const auth = (action, body) =>
   api(`https://identitytoolkit.googleapis.com/v1/accounts:${action}?key=${config.apiKey}`, {
@@ -55,6 +69,7 @@ const auth = (action, body) =>
     body,
   });
 try {
+  // Temporary debug attestation avoids headless reCAPTCHA trust issues without disabling enforcement.
   if (!process.env.GEMINI_TEST_STANDARD_APPCHECK) {
     const debug = await api(appCheck + '/debugTokens', {
       method: 'POST',
@@ -79,6 +94,7 @@ try {
   engine.event('decision', 'South Africa prepares to challenge an opposing country.');
   const { events, ...board } = game;
   gamePath = `users/${user.localId}/games/${game.id}`;
+  gamePaths.add(gamePath);
   await api(base + '/' + gamePath, {
     method: 'PATCH',
     token: user.idToken,
@@ -97,6 +113,7 @@ try {
         }),
       },
     });
+  // Seed an older report to verify new narration can coexist with saved history without rewriting it.
   const legacyText = 'South Africa prepares an attack.',
     legacyEvent = events.at(-1);
   await api(base + '/' + gamePath + '/aiReports/' + legacyEvent.id, {
@@ -114,35 +131,7 @@ try {
       }),
     },
   });
-  const root = path.resolve('dist');
-  server = createServer(async (req, res) => {
-    try {
-      const file = path.resolve(
-        root,
-        '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname),
-      );
-      if (file !== root && !file.startsWith(root + path.sep)) {
-        res.writeHead(403).end();
-        return;
-      }
-      const target = file === root ? path.join(root, 'index.html') : file;
-      res.writeHead(200, {
-        'Content-Type':
-          {
-            '.js': 'text/javascript',
-            '.css': 'text/css',
-            '.html': 'text/html',
-            '.svg': 'image/svg+xml',
-            '.ogg': 'audio/ogg',
-            '.mp3': 'audio/mpeg',
-          }[path.extname(target)] || 'application/octet-stream',
-      });
-      res.end(await readFile(target));
-    } catch {
-      res.writeHead(404).end();
-    }
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  server = await startTestServer();
   browser = await chromium.launch({
     headless: true,
   });
@@ -331,12 +320,26 @@ try {
   console.log(
     'PASS: real Gemini narrates the selected battle event and saves it separately from the game',
   );
+  const committed = await api(base + '/' + gamePath, { token: user.idToken });
+  assert.ok(Number(committed.fields.saveRevision.integerValue) >= 1);
+  assert.ok(committed.fields.historyHead.stringValue);
+  const lastFact = await api(
+    base + '/' + gamePath + '/events/' + committed.fields.historyHead.stringValue,
+    { token: user.idToken },
+  );
+  assert.ok(lastFact.fields.previousEventId);
+  console.log('PASS: live saves upgrade legacy history to a revision and committed event chain');
   for (const doc of reports.documents)
     console.log(
       'New commentary [' + doc.fields.eventType.stringValue + ']:',
       doc.fields.text.stringValue,
     );
+  // Removing the recovery cache proves report reuse comes from Firestore, not a stale in-memory page.
   const previous = requests;
+  await page.evaluate(
+    (uid) => localStorage.removeItem('meridian-cloud-cache-' + uid),
+    user.localId,
+  );
   await page.reload();
   await page.getByRole('tab', { name: 'AI commentary', exact: true }).click();
   await waitForDiceCommentary();
@@ -348,13 +351,65 @@ try {
   await page.locator('[data-action="roll"]').click();
   assert.equal(requests, previous);
   console.log('PASS: commentary can be turned off while battle controls keep working');
+
+  await page.goto(origin + '/#campaigns');
+  await page.locator(`[data-action="share"][data-id="${game.id}"]`).click();
+  const stopSharing = page.locator(`[data-action="stop-sharing"][data-id="${game.id}"]`);
+  await stopSharing.waitFor();
+  // Anonymous viewing must expose the published copy only, with neither move controls nor AI requests.
+  const guestContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  const guest = await guestContext.newPage();
+  let guestModelRequests = 0;
+  guest.on('request', (request) => {
+    if (request.url().includes('generateContent')) guestModelRequests++;
+  });
+  await guest.goto(origin + '/#live/' + game.id);
+  await guest.locator('.country-row').first().waitFor();
+  assert.equal(await guest.locator('.country-row').count(), 10);
+  assert.equal(await guest.locator('[data-action="roll"],[data-action="start-attack"]').count(), 0);
+  assert.equal(guestModelRequests, 0);
+  if (await page.locator('#help-dialog[open]').count())
+    await page.locator('[data-action="close-help"]').click();
+  await stopSharing.click();
+  await guest.waitForFunction(() => document.querySelectorAll('.country-row').length === 0);
+  await guestContext.close();
+  console.log(
+    'PASS: anonymous live viewing has no move controls or AI requests; revocation removes access',
+  );
+
+  await page.goto(origin + '/#setup');
+  await page.locator('#session-name').fill('New save release check');
+  await page.locator('[data-action="create-game"]').click();
+  await page.waitForURL(/#game\//);
+  const createdId = new URL(page.url()).hash.split('/')[1];
+  const createdPath = `users/${user.localId}/games/${createdId}`;
+  gamePaths.add(createdPath);
+  // Wait for a server-confirmed save before clearing local recovery; optimistic SDK state is insufficient.
+  const created = await waitForSavedCampaign(createdPath);
+  assert.ok(Number(created.fields.saveRevision.integerValue) >= 1);
+  await page.evaluate(
+    (uid) => localStorage.removeItem('meridian-cloud-cache-' + uid),
+    user.localId,
+  );
+  await page.reload();
+  await page.locator('.game-heading').waitFor();
+  assert.match(await page.locator('.game-heading').innerText(), /New save release check/);
+  console.log(
+    'PASS: a new campaign saves and resumes from Firebase with its browser cache removed',
+  );
   assert.deepEqual(errors, []);
 } finally {
   await browser?.close();
   if (server) await new Promise((resolve) => server.close(resolve));
+  // Delete only tracked fixture paths, then revoke the disposable user and temporary attestation.
+  // Independently attempt credential cleanup even when a document deletion fails.
   let failure;
   try {
-    if (gamePath) {
+    for (const gamePath of gamePaths) {
+      await api(base + '/liveGames/' + gamePath.split('/').at(-1), {
+        method: 'DELETE',
+        token: admin,
+      });
       for (const group of ['events', 'aiReports', 'aiReportsV2', 'commentary']) {
         const result = await api(base + '/' + gamePath + '/' + group + '?pageSize=100', {
           token: admin,

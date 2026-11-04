@@ -1,3 +1,4 @@
+// Difficulty tunes planning preferences only; combat rolls and legal troop budgets are shared.
 export const difficultyOptions = Object.freeze(
   [
     {

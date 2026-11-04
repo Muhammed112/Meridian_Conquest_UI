@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GameEngine } from '../dist/engine.js';
 
+/** Put a bot in control of a fixed board so scenarios vary only the relevant strategic facts. */
 function arena() {
   const game = GameEngine.create('Strategy regression', 'ZA', true);
   Object.assign(game, {
@@ -19,33 +20,42 @@ function arena() {
   );
   return new GameEngine(game);
 }
+// Apply planned transfers through legal engine actions instead of editing armies during assertions.
 const applyTransfers = (e) => {
   for (const move of e.npcTransfers()) e.transfer(move.from, move.to, move.amount);
 };
+// Transfers must conserve this total, unlike funding and conquest rewards.
 const armyTotal = (game) => game.countries.reduce((sum, country) => sum + country.army, 0);
 
-test('battle decisions explain continuing and stopping, including the persisted phase limit after reload', () => {
-  const e = arena(),
-    from = e.game.countries[1],
-    to = e.game.countries[2];
-  from.army = 20;
-  to.army = 5;
-  e.startAttack(from.code, to.code);
-  const continuing = e.npcBattleDecision();
-  assert.equal(continuing.continue, true);
-  assert.match(continuing.reason, /19 available attackers against 5 defenders/);
-  assert.match(continuing.reason, /Continuing/);
-  for (let phase = 0; phase < 20; phase++) e.roll(() => 3);
-  const restored = new GameEngine(JSON.parse(JSON.stringify(e.game))),
-    stopping = restored.npcBattleDecision();
-  assert.equal(stopping.continue, false);
-  assert.match(stopping.reason, /Stopping.*20 phases/);
-  assert.doesNotMatch(stopping.reason, /Continuing|Pressing/);
-  assert.equal(restored.npcBattleDecision({ phaseLimit: 30 }).continue, true);
-  restored.game.battle.phase = 30;
-  assert.match(restored.npcBattleDecision({ phaseLimit: 30 }).reason, /30 phases/);
-});
+// Bot explanations must match the action and preserve the phase limit across a saved-battle reload.
+test(
+  'battle decisions explain continuing and stopping, including the persisted' +
+    ' phase limit after reload',
+  () => {
+    const e = arena(),
+      from = e.game.countries[1],
+      to = e.game.countries[2];
+    from.army = 20;
+    to.army = 5;
+    e.startAttack(from.code, to.code);
+    const continuing = e.npcBattleDecision();
+    assert.equal(continuing.continue, true);
+    assert.match(continuing.reason, /19 available attackers against 5 defenders/);
+    assert.match(continuing.reason, /Continuing/);
+    for (let phase = 0; phase < 20; phase++) e.roll(() => 3);
+    const restored = new GameEngine(JSON.parse(JSON.stringify(e.game))),
+      stopping = restored.npcBattleDecision();
+    assert.equal(stopping.continue, false);
+    assert.match(stopping.reason, /Stopping.*20 phases/);
+    assert.doesNotMatch(stopping.reason, /Continuing|Pressing/);
+    assert.equal(restored.npcBattleDecision({ phaseLimit: 30 }).continue, true);
+    restored.game.battle.phase = 30;
+    assert.match(restored.npcBattleDecision({ phaseLimit: 30 }).reason, /30 phases/);
+  },
+);
 
+// A reinforcement plan must prepare an attack while retaining protection for its weaker owned
+// holding.
 test('NPC reinforcement prepares an offensive and retains troops in its other holding', () => {
   const e = arena(),
     [weak, strong] = e.game.countries;
@@ -63,6 +73,7 @@ test('NPC reinforcement prepares an offensive and retains troops in its other ho
   assert.ok(strong.army > 20);
 });
 
+// Defensive transfers must conserve soldiers and settle rather than undo themselves on every pass.
 test('NPC transfers support weak garrisons and conserve the army', () => {
   const e = arena(),
     [weak, strong] = e.game.countries;
@@ -76,6 +87,8 @@ test('NPC transfers support weak garrisons and conserve the army', () => {
   assert.deepEqual(e.npcTransfers(), [], 'a second defence pass must not undo the first');
 });
 
+// Bots must protect a newly captured country without changing the core capture reward or inventing
+// troops.
 test('an NPC fortifies a new conquest before passing the turn without creating soldiers', () => {
   const e = arena(),
     source = e.game.countries[1],
@@ -101,6 +114,7 @@ test('an NPC fortifies a new conquest before passing the turn without creating s
   assert.ok(target.army >= 2, 'the garrison remains defended when the next player starts');
 });
 
+// Resuming between conquest and fortification must still defend the captured holding legally.
 test('an older saved game can recover from a conquest before the fortification step', () => {
   const e = arena(),
     source = e.game.countries[1],
@@ -118,6 +132,7 @@ test('an older saved game can recover from a conquest before the fortification s
   assert.equal(restored.game.attackUsed, true);
 });
 
+// Repeated cheap recaptures must not trap bots in a loop when another worthwhile target exists.
 test('NPCs prefer a worthwhile alternative to repeatedly exchanging the same one-soldier country', () => {
   const e = arena(),
     [source, loop, backup, alternative, otherBackup] = e.game.countries;
@@ -140,6 +155,7 @@ test('NPCs prefer a worthwhile alternative to repeatedly exchanging the same one
   assert.equal(e.npcPlan().to.code, alternative.code);
 });
 
+// Anti-loop penalties must not prevent taking the final country needed for victory.
 test('a recently traded last enemy country can still be attacked to win', () => {
   const e = arena();
   e.game.countries.forEach((country) => Object.assign(country, { owner: 1, army: 3 }));
@@ -155,6 +171,7 @@ test('a recently traded last enemy country can still be attacked to win', () => 
   assert.equal(e.npcPlan().to.code, target.code);
 });
 
+// Reserve preferences must not cause a bot to abandon a favorable final exchange unnecessarily.
 test('NPCs keep fighting a winnable final exchange instead of abandoning it to preserve a reserve', () => {
   const e = arena(),
     source = e.game.countries[1],
@@ -166,6 +183,8 @@ test('NPCs keep fighting a winnable final exchange instead of abandoning it to p
   assert.equal(e.npcBattleDecision().continue, true);
 });
 
+// Bots must be able to concentrate spare troops without stripping every other country to one
+// soldier.
 test('NPCs combine spare troops for an attack while retaining occupation forces', () => {
   const e = arena(),
     [first, second, third] = e.game.countries;
@@ -177,6 +196,8 @@ test('NPCs combine spare troops for an attack while retaining occupation forces'
   assert.equal(armyTotal(e.game), before);
 });
 
+// A bot with only one holding must still consider a viable equal-sized opponent instead of always
+// waiting.
 test('an isolated NPC can challenge an equal-sized army', () => {
   const e = arena(),
     source = e.game.countries[1],
@@ -186,6 +207,8 @@ test('an isolated NPC can challenge an equal-sized army', () => {
   assert.equal(e.npcPlan().to.code, target.code);
 });
 
+// More active bots must still decline hopeless attacks and stop battles that have become
+// unwinnable.
 test('NPCs still avoid attacks and stop battles when clearly outmatched', () => {
   const e = arena(),
     source = e.game.countries[1],
@@ -196,6 +219,8 @@ test('NPCs still avoid attacks and stop battles when clearly outmatched', () => 
   assert.equal(e.npcBattleDecision().continue, false);
 });
 
+// Large empires need meaningful garrisons so a tiny exposed holding does not become an endless
+// cheap target.
 test('NPC occupation forces scale as armies grow rather than remaining cheap repeating targets', () => {
   const e = arena(),
     [second, first] = e.game.countries;
@@ -208,6 +233,8 @@ test('NPC occupation forces scale as armies grow rather than remaining cheap rep
   assert.equal(armyTotal(e.game), before);
 });
 
+// Target scoring must recognize a decisive large battle rather than farm an easy low-impact country
+// forever.
 test('NPCs can choose a decisive large battle instead of endlessly farming a small target', () => {
   const e = arena(),
     [source, small, backup, decisive] = e.game.countries;

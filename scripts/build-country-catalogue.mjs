@@ -5,6 +5,7 @@ import { readPopulationRows } from './update-populations.mjs';
 import { legacyCountries } from '../dist/legacy-countries.js';
 const source = 'https://www.worldometers.info/world-population/population-by-country/';
 const repository = 'https://api.github.com/repos/mledoze/countries';
+/** Fetch a pinned metadata source or population page with a bounded request timeout. */
 async function get(url, format = 'json') {
   const response = await fetch(url, {
     signal: AbortSignal.timeout(30000),
@@ -16,6 +17,7 @@ async function get(url, format = 'json') {
   if (!response.ok) throw new Error('Country catalogue source returned HTTP ' + response.status);
   return format === 'json' ? response.json() : response.text();
 }
+// Pin metadata and its licence to one revision so the generated catalogue has reproducible provenance.
 const revision = (await get(repository + '/commits/master')).sha;
 if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('Country metadata revision is invalid.');
 const metadataURL = `https://raw.githubusercontent.com/mledoze/countries/${revision}/countries.json`;
@@ -25,6 +27,7 @@ const [metadata, html, licence] = await Promise.all([
   get(`https://raw.githubusercontent.com/mledoze/countries/${revision}/LICENSE`, 'text'),
 ]);
 const { year, rows } = readPopulationRows(html);
+// Match source spellings without accents or punctuation; explicit aliases handle remaining differences.
 const normalize = (value) =>
   value
     .normalize('NFKD')
@@ -49,6 +52,7 @@ const aliases = {
   'saint-pierre-and-miquelon': 'PM',
   'holy-see': 'VA',
 };
+// Retain existing names and marker coordinates so an expanded catalogue does not move old campaigns.
 const original = new Map(legacyCountries.map((country) => [country.code, country])),
   records = [],
   populations = {};
@@ -87,6 +91,7 @@ for (const row of rows) {
   records.push(record);
   populations[code] = row.population;
 }
+// Reject partial scrapes before touching generated files, and retain the old catalogue's leading order.
 assert.ok(records.length >= 230, 'Worldometers country list is incomplete');
 const order = new Map(legacyCountries.map((country, index) => [country.code, index]));
 records.sort(
@@ -103,22 +108,36 @@ await writeFile(
   new URL('../dist/country-catalogue.js', import.meta.url),
   '// ISO names/codes/coordinates derived from ' +
     metadataURL +
-    ' (ODbL 1.0).\n// See assets/COUNTRY_DATA_CREDITS.txt and COUNTRY_DATA_LICENSE.txt.\nexport const countryMetadata = ' +
+    (' (ODbL 1.0).\n// See assets/COUNTRY_DATA_CREDITS.txt and' +
+      ' COUNTRY_DATA_LICENSE.txt.\nexport const countryMetadata = ') +
     JSON.stringify(records, null, 2) +
     ';\n',
 );
 const snapshot = { version: 2, source, year, fetchedAt: new Date().toISOString(), populations };
 await writeFile(
   new URL('../dist/population-snapshot.js', import.meta.url),
-  '// Last validated Worldometers snapshot; gameplay also works offline.\nexport const bundledPopulations = ' +
+  '// Last validated Worldometers snapshot; gameplay also works' +
+    ' offline.\nexport const bundledPopulations = ' +
     JSON.stringify(snapshot, null, 2) +
     ';\n',
 );
 await writeFile(new URL('../dist/assets/COUNTRY_DATA_LICENSE.txt', import.meta.url), licence);
 await writeFile(
   new URL('../dist/assets/COUNTRY_DATA_CREDITS.txt', import.meta.url),
-  `Country names, ISO codes and geographic coordinates: mledoze/countries\n${metadataURL}\nLicensed under Open Data Commons Open Database License (ODbL) 1.0.\nThe generated metadata database is available under the same licence at ../country-catalogue.js.\nOriginal Meridian country labels and marker positions are retained for saved-game compatibility.\n\nPopulation figures are read separately from the exam's specified source:\n${source}\nEstimate year: ${year}. Figures are annual estimates, not live clocks.\nCountries too small for the bundled map's outlines remain visible and selectable as markers and roster entries.\n`,
+  'Country names, ISO codes and geographic coordinates: mledoze/countries\n' +
+    `${metadataURL}\n` +
+    'Licensed under Open Data Commons Open Database License (ODbL) 1.0.\n' +
+    'The generated metadata database is available under the same licence at ' +
+    '../country-catalogue.js.\n' +
+    'Original Meridian country labels and marker positions are retained for ' +
+    'saved-game compatibility.\n\n' +
+    "Population figures are read separately from the exam's specified source:\n" +
+    `${source}\nEstimate year: ${year}. Figures are annual estimates, not live clocks.\n` +
+    "Countries too small for the bundled map's outlines remain visible and selectable " +
+    'as markers and roster entries.\n',
 );
 console.log(
-  `Generated ${records.length} country/territory records and a ${year} population snapshot; Vatican City: ${populations.VA} people.`,
+  /* prettier-ignore */ `Generated ${records.length} country/territory records and a ${
+    year
+  } population snapshot; Vatican City: ${populations.VA} people.`,
 );

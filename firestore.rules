@@ -1,8 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Normal players own their saves; the scheduled reference-data account is excluded.
     function owner(uid) { return signedIn() && request.auth.uid == uid; }
-    function signedIn() { return request.auth != null && request.auth.token.get('populationUpdater',false) != true; }
+    function signedIn() { return request.auth != null && request.auth.token.get('populationUpdater',
+      false) != true; }
     // A separate scheduled updater can publish this public reference document.
     // Its credentials cannot read or modify another player's games or rooms.
     match /publicData/populations {
@@ -14,58 +16,83 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
     }
 
+    // Keep stored armies finite, integral and within the same range accepted by the game codec.
     function validArmy(army, minimum) {
       return army is int && army >= minimum && army <= 100000;
     }
     // Firestore rules cannot loop. Keep these fixed-size checks within the evaluation budget.
+    function countryCodes(c) { return [c[0].code,c[1].code,c[2].code,c[3].code,c[4].code,c[5].code,
+      c[6].code,c[7].code,c[8].code,c[9].code]; }
     function validCountries(c, minimum, expectedCodes) {
-      let codes = [c[0].code,c[1].code,c[2].code,c[3].code,c[4].code,c[5].code,c[6].code,c[7].code,c[8].code,c[9].code];
-      let owners = [c[0].owner,c[1].owner,c[2].owner,c[3].owner,c[4].owner,c[5].owner,c[6].owner,c[7].owner,c[8].owner,c[9].owner];
+      let owners = [c[0].owner,c[1].owner,c[2].owner,c[3].owner,c[4].owner,c[5].owner,c[6].owner,
+        c[7].owner,c[8].owner,c[9].owner];
       return c is list && c.size() == 10
-        && codes == expectedCodes && codes.toSet().size() == 10 && owners.hasOnly([0,1,2,3,4,5,6,7,8,9])
-        && validArmy(c[0].army,minimum) && validArmy(c[1].army,minimum) && validArmy(c[2].army,minimum)
-        && validArmy(c[3].army,minimum) && validArmy(c[4].army,minimum) && validArmy(c[5].army,minimum)
-        && validArmy(c[6].army,minimum) && validArmy(c[7].army,minimum) && validArmy(c[8].army,minimum) && validArmy(c[9].army,minimum);
+        && countryCodes(c) == expectedCodes && owners.hasOnly([0,1,2,3,4,5,6,7,8,9])
+        && validArmies(c,minimum);
     }
+    function validArmies(c,minimum) {
+      return validArmy(c[0].army,minimum) && validArmy(c[1].army,minimum) && validArmy(c[2].army,minimum)
+        && validArmy(c[3].army,minimum) && validArmy(c[4].army,minimum) && validArmy(c[5].army,minimum)
+        && validArmy(c[6].army,minimum) && validArmy(c[7].army,minimum) && validArmy(c[8].army,
+          minimum) && validArmy(c[9].army,minimum);
+    }
+    // Immutable board metadata is validated at creation; playing-room updates freeze it.
     function validBoard(b) {
       return b is map && b.id is string && b.id.matches('^[A-Za-z0-9_-]{1,60}$')
         && b.name is string && b.name.size() > 0 && b.name.size() <= 60
-        && b.countryCodes is list && b.countryCodes.size() == 10
+        && b.countryCodes is list && b.countryCodes.size() == 10 && b.countryCodes.toSet().size() == 10
         && b.origins is map && b.origins.keys().toSet() == b.countryCodes.toSet()
-        && validCountries(b.countries,1,b.countryCodes)
         && b.order is list && b.order.size() == 10 && b.order.toSet() == [0,1,2,3,4,5,6,7,8,9].toSet()
-        && b.position is int && b.position >= 0 && b.position < 10
-        && b.round is int && b.round >= 1 && b.round <= 100000
-        && b.budget is int && b.budget >= 0 && b.budget <= 20
-        && b.attackUsed is bool && b.turnStarted is bool
-        && b.status in ['active','won','lost','finished']
-        && (b.winner == null || (b.winner is int && b.winner >= 0 && b.winner < 10));
+        && validCountries(b.countries,1,b.countryCodes) && validTurnBoard(b);
     }
+    // Reuse mutable-state validation without repeatedly rechecking frozen origins and order.
+    function validTurnBoard(b) {
+      return b.position is int && b.position >= 0 && b.position < 10
+        && b.round is int && b.round >= 1 && b.round <= 100000
+        && b.budget is int && b.budget >= 0 && b.budget <= 20 && validActionState(b);
+    }
+    // A winner must actually own every slot; a supplied winner ID alone cannot finish a game.
+    function validActionState(b) {
+      return b.attackUsed is bool && b.turnStarted is bool
+        && b.status in ['active','won','lost','finished']
+        && (b.winner == null || (b.winner is int && b.winner >= 0 && b.winner < 10
+          && [b.countries[0].owner,b.countries[1].owner,b.countries[2].owner,b.countries[3].owner,
+            b.countries[4].owner,b.countries[5].owner,b.countries[6].owner,b.countries[7].owner,
+            b.countries[8].owner,b.countries[9].owner].hasOnly([b.winner])));
+    }
+    // Facts are immutable. Generated narration belongs in separate report documents.
     function validEventFrame(e, eventId, type) {
       return e is map && e.id == eventId && e.type == type
-        && e.type in ['campaign','turn','decision','attack','dice','conquest','reinforce','transfer','elimination','victory','retreat','held']
+        && e.type in ['campaign','turn','decision','attack','dice','conquest','reinforce',
+          'transfer','elimination','victory','retreat','held']
         && e.text is string && e.text.size() <= 2000
         && e.player is int && e.player >= 0 && e.player < 10
         && e.round is int && e.round >= 1 && e.round <= 100000
         && e.board is list && e.board.size() == 10
         && !e.keys().hasAny(['commentary','commentaryVersion']);
     }
+    // Only turn state changes: starting countries, population values and seat order stay fixed.
     function sameCampaign(a,b) {
-      return b.diff(a).affectedKeys().hasOnly(['countries','position','round','turnStarted','budget','attackUsed','battle','lastBattle','events','status','winner','updatedAt']);
+      return b.diff(a).affectedKeys().hasOnly(['countries','position','round','turnStarted',
+        'budget','attackUsed','battle','lastBattle','events','status','winner','updatedAt']);
     }
 
+    // Keep the previous report format readable while accepting new narration in V2 separately.
     function validAIReport(eventId) {
       let d=request.resource.data;
-      return d.keys().hasOnly(['eventId','eventType','text','status','source','model','authorUid','createdAt'])
+      return d.keys().hasOnly(['eventId','eventType','text','status','source','model','authorUid',
+        'createdAt'])
         && d.eventId == eventId && d.authorUid == request.auth.uid
         && d.eventType in ['attack','dice','retreat','held','conquest','elimination','victory','decision']
         && d.text is string && d.text.size() > 0 && d.text.size() <= 500
         && d.status == 'ready' && d.source == 'gemini' && d.model == 'gemini-3.5-flash-lite'
         && d.createdAt == request.time;
     }
+    // Report schema checks do not prove model provenance; generation uses Firebase AI Logic.
     function validAIReportV2(eventId) {
       let d=request.resource.data;
-      return d.keys().hasOnly(['eventId','eventType','text','status','source','model','narrationVersion','authorUid','createdAt'])
+      return d.keys().hasOnly(['eventId','eventType','text','status','source','model',
+        'narrationVersion','authorUid','createdAt'])
         && d.eventId == eventId && d.authorUid == request.auth.uid
         && d.eventType in ['attack','dice','retreat','held','conquest','elimination','victory','decision']
         && d.text is string && d.text.size() > 0 && d.text.size() <= 500
@@ -75,8 +102,114 @@ service cloud.firestore {
     }
 
     match /rooms/{code} {
+      // Setup fields are separate from the board and freeze when the host starts play.
+      function validOpening(s) {
+        return s is map && s.keys().hasOnly(['countries','players','contenders','rolls','round','winner'])
+          && s.countries is list && s.countries.size() == 10 && s.countries.toSet().size() == 10
+          && s.players is list && s.players.size() == 10 && s.players.toSet().size() == 10
+          && s.contenders is list && s.contenders.size() > 0 && s.contenders.size() <= 10
+          && s.contenders.toSet().size() == s.contenders.size() && s.contenders.hasOnly(s.players)
+          && s.rolls is map && s.rolls.keys().toSet() == s.players.toSet()
+          && s.rolls.values().hasOnly([0,1,2,3,4,5,6])
+          && s.round is int && s.round >= 1 && s.round <= 100000
+          && validOpeningWinner(s);
+      }
+      // An empty winner is normal during setup; a recorded winner must beat every tied contender.
+      function validOpeningWinner(s) { return s.winner == ''
+        || (s.winner in s.contenders && openingComplete(s) && winsOpening(s,s.winner)); }
+      // Only contenders can have zero faces; completed non-contenders retain their old roll.
+      function openingComplete(s) { return !s.rolls.values().hasAny([0]); }
+      function beats(s,id,i) { return !(s.players[i] in s.contenders) || s.players[i] == id
+        || s.rolls[id] > s.rolls[s.players[i]]; }
+      function winsOpening(s,id) { return beats(s,id,0) && beats(s,id,1) && beats(s,id,2)
+        && beats(s,id,3) && beats(s,id,4) && beats(s,id,5) && beats(s,id,6)
+        && beats(s,id,7) && beats(s,id,8) && beats(s,id,9); }
+      function chooseCountry() {
+        let old = resource.data;
+        let next = request.resource.data;
+        let choices = next.countryChoices;
+        return old.status == 'lobby' && next.status == 'lobby' && request.auth.uid in old.memberIds
+          && next.diff(old).affectedKeys().hasOnly(['setupVersion','countryChoices','initiative',
+            'revision','updatedAt'])
+          && next.setupVersion == 1 && next.initiative == null && choices is map
+          && choices.keys().hasOnly(old.memberIds)
+          && choices.diff(old.get('countryChoices',{})).affectedKeys().hasOnly([request.auth.uid])
+          && choices[request.auth.uid] is string && choices[request.auth.uid].matches('^[A-Z]{2}$')
+          && choices.values().toSet().size() == choices.size();
+      }
+      // Human slots retain chosen countries and pending dice; only bot slots start with a roll.
+      function initialSeat(s,ids,choices,i) {
+        let id = s.players[i];
+        return i < ids.size()
+          ? id == ids[i] && s.countries[i] == choices[id] && s.rolls[id] == 0
+          : id == 'bot:' + string(i) && s.rolls[id] >= 1;
+      }
+      function beginOpening() {
+        let old = resource.data;
+        let next = request.resource.data;
+        let s = next.initiative;
+        return old.status == 'lobby' && next.status == 'rolling' && request.auth.uid == old.hostUid
+          && next.diff(old).affectedKeys().hasOnly(['setupVersion','status','initiative','revision','updatedAt'])
+          && next.setupVersion == 1 && next.countryChoices.keys().toSet() == old.memberIds.toSet()
+          && validOpening(s)
+          && next.initiative.round == 1 && next.initiative.winner == ''
+          && next.initiative.contenders == next.initiative.players
+          && initialSeat(s,old.memberIds,next.countryChoices,0)
+          && initialSeat(s,old.memberIds,next.countryChoices,1)
+          && initialSeat(s,old.memberIds,next.countryChoices,2)
+          && initialSeat(s,old.memberIds,next.countryChoices,3)
+          && initialSeat(s,old.memberIds,next.countryChoices,4)
+          && initialSeat(s,old.memberIds,next.countryChoices,5)
+          && initialSeat(s,old.memberIds,next.countryChoices,6)
+          && initialSeat(s,old.memberIds,next.countryChoices,7)
+          && initialSeat(s,old.memberIds,next.countryChoices,8)
+          && initialSeat(s,old.memberIds,next.countryChoices,9);
+      }
+      function openingRoll() {
+        let old = resource.data;
+        let next = request.resource.data;
+        return old.status == 'rolling' && next.status == 'rolling' && request.auth.uid in old.memberIds
+          && old.initiative.winner == '' && request.auth.uid in old.initiative.contenders
+          && old.initiative.rolls[request.auth.uid] == 0 && next.initiative.rolls[request.auth.uid] >= 1
+          && next.initiative.rolls[request.auth.uid] is int && next.initiative.rolls[request.auth.uid] <= 6
+          && next.diff(old).affectedKeys().hasOnly(['initiative','revision','updatedAt'])
+          && next.initiative.diff(old.initiative).affectedKeys().hasOnly(['rolls','winner'])
+          && next.initiative.rolls.diff(old.initiative.rolls).affectedKeys().hasOnly([request.auth.uid])
+          && validOpeningWinner(next.initiative);
+      }
+      // A tie-break may reset only the actual highest tied participants, never a settled winner.
+      function tiedSeat(a,b,i,high,humans) {
+        let id = a.players[i];
+        let face = a.rolls[id];
+        return id in a.contenders
+          ? (face == high ? id in b.contenders && (i < humans ? b.rolls[id] == 0 : b.rolls[id] >= 1)
+            : face < high && !(id in b.contenders))
+          : !(id in b.contenders);
+      }
+      function openingTieBreak() {
+        let old = resource.data;
+        let next = request.resource.data;
+        let a = old.initiative;
+        let b = next.initiative;
+        let high = a.rolls[b.contenders[0]];
+        let humans = old.memberIds.size();
+        return old.status == 'rolling' && next.status == 'rolling' && request.auth.uid == old.hostUid
+          && a.winner == '' && openingComplete(a) && b.contenders.size() >= 2
+          && b.contenders.toSet().size() == b.contenders.size() && b.contenders.hasOnly(a.players)
+          && b.rolls.keys().toSet() == a.rolls.keys().toSet() && b.rolls.values().hasOnly([0,1,2,3,4,5,6])
+          && b.round is int && b.round <= 100000 && validOpeningWinner(b)
+          && next.diff(old).affectedKeys().hasOnly(['initiative','revision','updatedAt'])
+          && b.diff(a).affectedKeys().hasOnly(['contenders','rolls','round','winner']) && b.round == a.round + 1
+          && b.rolls.diff(a.rolls).affectedKeys().hasOnly(b.contenders)
+          && tiedSeat(a,b,0,high,humans) && tiedSeat(a,b,1,high,humans) && tiedSeat(a,b,2,high,humans)
+          && tiedSeat(a,b,3,high,humans) && tiedSeat(a,b,4,high,humans) && tiedSeat(a,b,5,high,humans)
+          && tiedSeat(a,b,6,high,humans) && tiedSeat(a,b,7,high,humans)
+          && tiedSeat(a,b,8,high,humans) && tiedSeat(a,b,9,high,humans);
+      }
       function validRoom(d) {
-        return d.keys().hasOnly(['code','hostUid','memberIds','members','name','difficulty','status','createdAt','updatedAt','revision','currentSeat','controllerUid','winnerSeat','eventCount','payload','schemaVersion','board'])
+        return d.keys().hasOnly(['code','hostUid','memberIds','members','name','difficulty',
+          'status','createdAt','updatedAt','revision','currentSeat','controllerUid','winnerSeat',
+          'eventCount','payload','schemaVersion','board','setupVersion','countryChoices','initiative'])
           && code.matches('^[A-HJ-NP-Z2-9]{6}$') && d.code == code
           && d.hostUid is string && d.hostUid in d.memberIds
           && d.memberIds is list && d.memberIds.size() >= 1 && d.memberIds.size() <= 10
@@ -84,11 +217,34 @@ service cloud.firestore {
           && d.members is map && d.members.keys().toSet() == d.memberIds.toSet()
           && d.name is string && d.name.size() > 0 && d.name.size() <= 50
           && d.difficulty in ['easy','medium','hard','extreme']
-          && d.status in ['lobby','playing','finished','closed']
+          && d.status in ['lobby','rolling','playing','finished','closed']
           && d.createdAt is number && validRoomState(d);
       }
       // Membership and game updates already freeze the other lobby metadata.
       // Rechecking it on every move wastes the limited rule evaluation budget.
+      // The controller and immutable board checks below establish seat, mode and header bounds.
+      // Army changes keep position/round and consume funding through roomMoveBounds.
+      function validPlayingUpdate(d) {
+        let old = resource.data;
+        let before = old.board;
+        let b = d.board;
+        return d.schemaVersion == 2 && d.revision == old.revision + 1
+          && request.auth.uid == old.controllerUid && gameFieldsOnly(old,d)
+          && d.updatedAt is number && d.eventCount is int
+          && d.eventCount > old.eventCount && d.eventCount <= old.eventCount + 30
+          && d.payload is string && d.payload.size() < 700000
+          && b.countries is list && b.countries.size() == 10
+          && countryCodes(b.countries) == b.countryCodes
+          && (b.countries == before.countries ? validTurnBoard(b) : validActionState(b))
+          && b.order[b.position] == d.currentSeat
+          && (b.winner == null ? -1 : b.winner) == d.winnerSeat
+          && d.controllerUid == (d.currentSeat < d.memberIds.size() ? d.memberIds[d.currentSeat] : d.hostUid)
+          && d.status == (b.winner == null ? 'playing' : 'finished')
+          && b != before && sameCampaign(before,b)
+          && roomMoveBounds(before,b,old.currentSeat)
+          && b.round == before.round + (b.position < before.position ? 1 : 0);
+      }
+      // Setup and legacy paths need the full shape check before their metadata becomes immutable.
       function validRoomState(d) {
         return d.updatedAt is number
           && d.revision is int && d.eventCount is int && d.eventCount >= 0
@@ -96,8 +252,9 @@ service cloud.firestore {
           && d.currentSeat is int && d.currentSeat >= 0 && d.currentSeat < 10
           && d.winnerSeat is int && d.winnerSeat >= -1 && d.winnerSeat < 10
           && d.controllerUid == (d.currentSeat < d.memberIds.size() ? d.memberIds[d.currentSeat] : d.hostUid)
+          && (d.status != 'rolling' || d.setupVersion == 1)
           && (d.get('schemaVersion',1) == 1 || (d.schemaVersion == 2
-            && ((d.status in ['lobby','closed'] && d.board == null)
+            && ((d.status in ['lobby','rolling','closed'] && d.board == null)
               || (d.status in ['playing','finished'] && validBoard(d.board)
                 && d.board.mode == 'multiplayer' && d.board.order[d.board.position] == d.currentSeat
                 && (d.board.winner == null ? -1 : d.board.winner) == d.winnerSeat))));
@@ -108,32 +265,118 @@ service cloud.firestore {
           && d.members[request.auth.uid].name.size() > 0
           && d.members[request.auth.uid].name.size() <= 32;
       }
+      // Each guest may change only their own lobby membership; the host cannot leave its seat.
       function lobbyMembership() {
         let old = resource.data;
         let next = request.resource.data;
         return old.status == 'lobby' && next.status == 'lobby'
-          && next.diff(old).affectedKeys().hasOnly(['members','memberIds','updatedAt','revision'])
+          && next.diff(old).affectedKeys().hasOnly(['members','memberIds','updatedAt','revision','countryChoices'])
           && next.members.diff(old.members).affectedKeys().hasOnly([request.auth.uid])
+          && next.get('countryChoices',{}).diff(old.get('countryChoices',{})).affectedKeys()
+            .hasOnly([request.auth.uid])
+          && next.get('countryChoices',{}).keys().hasOnly(next.memberIds)
           && ((!(request.auth.uid in old.memberIds)
               && next.memberIds == old.memberIds.concat([request.auth.uid]) && validSelf(next))
             || (request.auth.uid != old.hostUid && request.auth.uid in old.memberIds
               && next.memberIds == old.memberIds.removeAll([request.auth.uid])
               && !(request.auth.uid in next.members)));
       }
+      // Fixed lists replace loops; one delta list checks funding without repeated per-slot calls.
+      // Nonnegative deltas already preserve garrisons; recheck integer types and the upper bound.
+      function fundedArmy(army) { return army is int && army <= 100000; }
+      function fundedArmies(c) {
+        return fundedArmy(c[0].army) && fundedArmy(c[1].army) && fundedArmy(c[2].army)
+          && fundedArmy(c[3].army) && fundedArmy(c[4].army) && fundedArmy(c[5].army)
+          && fundedArmy(c[6].army) && fundedArmy(c[7].army) && fundedArmy(c[8].army)
+          && fundedArmy(c[9].army);
+      }
+      function ownedMove(a,b,budget,seat) {
+        let changes = [b[0].army-a[0].army,b[1].army-a[1].army,b[2].army-a[2].army,
+          b[3].army-a[3].army,b[4].army-a[4].army,b[5].army-a[5].army,b[6].army-a[6].army,
+          b[7].army-a[7].army,b[8].army-a[8].army,b[9].army-a[9].army];
+        // At most ten countries grant two reinforcements each, so integer additions lie in 0..20.
+        // The final list substitutes the active seat for unchanged slots and checks actual donors.
+        return changes[0]+changes[1]+changes[2]+changes[3]+changes[4]+changes[5]+changes[6]
+            +changes[7]+changes[8]+changes[9] == budget
+          && (budget > 0 ? changes.hasOnly([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20])
+              && fundedArmies(b)
+            : a.removeAll(b).size() == 2 && validArmies(b,1))
+          && [a[0].owner,a[1].owner,a[2].owner,a[3].owner,a[4].owner,
+            a[5].owner,a[6].owner,a[7].owner,a[8].owner,a[9].owner]
+            == [b[0].owner,b[1].owner,b[2].owner,b[3].owner,b[4].owner,
+              b[5].owner,b[6].owner,b[7].owner,b[8].owner,b[9].owner]
+          && [changes[0] == 0 ? seat : a[0].owner,changes[1] == 0 ? seat : a[1].owner,
+            changes[2] == 0 ? seat : a[2].owner,changes[3] == 0 ? seat : a[3].owner,
+            changes[4] == 0 ? seat : a[4].owner,changes[5] == 0 ? seat : a[5].owner,
+            changes[6] == 0 ? seat : a[6].owner,changes[7] == 0 ? seat : a[7].owner,
+            changes[8] == 0 ? seat : a[8].owner,changes[9] == 0 ? seat : a[9].owner].hasOnly([seat]);
+      }
+      function battleChange(a,b,battle,seat,captured,reward) {
+        return a == b || (a.code == b.code && validArmy(b.army,1)
+          && (a.code == battle.from
+            ? a.owner == seat && b.owner == seat && b.army <= a.army + (captured ? reward - 1 : 0)
+            : a.code == battle.to && a.owner != seat
+              && (captured ? b.owner == seat && b.army == 1
+                : b.owner == a.owner && b.army <= a.army)));
+      }
+      // Removing unchanged records isolates the two battle participants without a ten-slot loop.
+      function battleMove(a,b,battle,origins,seat) {
+        let before = a.removeAll(b);
+        let after = b.removeAll(a);
+        let second = before.size() > 1 ? 1 : 0;
+        let captured = before[0].owner != after[0].owner
+          || before[second].owner != after[second].owner;
+        let strength = origins[battle.to].value;
+        let reward = strength >= 8 ? 4 : (strength >= 6 ? 3 : 2);
+        return before.size() <= 2 && before.size() == after.size()
+          && battleChange(before[0],after[0],battle,seat,captured,reward)
+          && (second == 0 || battleChange(before[1],after[1],battle,seat,captured,reward));
+      }
+      // Funding must be spent before advancing; the attack allowance cannot reset mid-turn.
+      function roomMoveBounds(old,next,seat) {
+        let a = old.countries;
+        let b = next.countries;
+        let battle = old.get('battle',null);
+        let sameTurn = old.position == next.position;
+        return (!sameTurn || ((next.budget == old.budget
+            || (old.budget > 0 && next.budget == 0)) && (!old.attackUsed || next.attackUsed)))
+          && (old.budget == 0 || sameTurn)
+          && (a == b ? (old.budget == 0 || next.budget == old.budget)
+            : sameTurn && next.budget == 0 && (battle == null
+              ? ownedMove(a,b,old.budget,seat)
+              : battleMove(a,b,battle,old.origins,seat)));
+      }
+      function gameFieldsOnly(old,next) {
+        return next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt',
+          'currentSeat','controllerUid','winnerSeat','eventCount','schemaVersion','board']);
+      }
+      // Legacy play and pre-opening-roll lobbies retain their supported transition path.
       function gameUpdate() {
         let old = resource.data;
         let next = request.resource.data;
-        return next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt','currentSeat','controllerUid','winnerSeat','eventCount','schemaVersion','board'])
-          && ((old.status == 'lobby' && request.auth.uid == old.hostUid && next.status == 'playing' && next.winnerSeat == -1)
-            || (old.status == 'playing' && request.auth.uid == old.controllerUid
+        return gameFieldsOnly(old,next)
+          && (((old.status == 'lobby' && old.get('setupVersion',0) == 0)
+              && request.auth.uid == old.hostUid && next.status == 'playing'
+            && next.winnerSeat == -1)
+            || (old.status == 'playing' && old.get('schemaVersion',1) == 1
+              && request.auth.uid == old.controllerUid
               && ((next.status == 'playing' && next.winnerSeat == -1)
                 || (next.status == 'finished' && next.winnerSeat >= 0))))
-          && (old.get('schemaVersion',1) == 1 || (next.schemaVersion == 2
-            && (old.status == 'lobby' || (next.board != old.board && sameCampaign(old.board,next.board)
-              && next.board.round >= old.board.round && next.board.round <= old.board.round + 1
-              && (next.board.position != old.board.position || next.board.round == old.board.round)))))
           && next.eventCount > old.eventCount && next.eventCount <= old.eventCount + 30;
       }
+      // The opening winner was verified when their roll was recorded; do not revalidate all dice.
+      function openingStart() {
+        let old = resource.data;
+        let next = request.resource.data;
+        return request.auth.uid == old.hostUid && next.status == 'playing' && next.winnerSeat == -1
+          && next.diff(old).affectedKeys().hasOnly(['payload','status','revision','updatedAt',
+            'currentSeat','controllerUid','winnerSeat','eventCount','schemaVersion','board'])
+          && next.schemaVersion == 2 && old.initiative.winner != ''
+          && next.board.countryCodes == old.initiative.countries && next.board.position == 0
+          && old.initiative.players[next.board.order[0]] == old.initiative.winner
+          && next.eventCount > old.eventCount && next.eventCount <= old.eventCount + 30;
+      }
+      // The room code is an invitation for signed-in friends; public visitors use liveGames.
       allow get: if signedIn();
       allow list, delete: if false;
       allow create: if signedIn() && request.resource.data.status == 'lobby'
@@ -142,14 +385,24 @@ service cloud.firestore {
         && request.resource.data.memberIds == [request.auth.uid]
         && request.resource.data.revision == 0 && request.resource.data.eventCount == 0
         && request.resource.data.status == 'lobby' && request.resource.data.payload == ''
+        && (request.resource.data.get('setupVersion',0) == 0 ||
+          (request.resource.data.setupVersion == 1 && request.resource.data.countryChoices == {}
+            && request.resource.data.initiative == null))
         && request.resource.data.currentSeat == 0 && request.resource.data.winnerSeat == -1;
-      allow update: if signedIn() && validRoomState(request.resource.data)
+      allow update: if signedIn() && (resource.data.status == 'playing'
+          && resource.data.get('schemaVersion',1) == 2 ? validPlayingUpdate(request.resource.data)
+          : validRoomState(request.resource.data)
         && request.resource.data.revision == resource.data.revision + 1
         && (resource.data.get('schemaVersion',1) == 1 || request.resource.data.get('schemaVersion',1) == 2)
-        && (lobbyMembership() || gameUpdate()
+        && ((resource.data.status == 'rolling'
+            ? (request.resource.data.status == 'rolling' ? (openingRoll() || openingTieBreak()) : openingStart())
+            : (resource.data.status == 'lobby' && request.resource.data.status == 'rolling'
+              ? beginOpening() : (lobbyMembership() || gameUpdate()
+                || (resource.data.status == 'lobby' && chooseCountry()))))
           || (resource.data.status == 'lobby' && request.auth.uid == resource.data.hostUid
             && request.resource.data.status == 'closed'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','revision','updatedAt'])));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status',
+              'revision','updatedAt']))));
       match /aiReports/{eventId} {
         function parentRoom() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
         allow read: if signedIn() && request.auth.uid in parentRoom().memberIds;
@@ -165,29 +418,63 @@ service cloud.firestore {
         allow update, delete: if false;
       }
       match /events/{eventId} {
+        // getAfter ties every new event to the board/revision committed in the same transaction.
         function roomBefore() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
         function roomAfter() { return getAfter(/databases/$(database)/documents/rooms/$(code)).data; }
         allow read: if signedIn() && request.auth.uid in roomBefore().memberIds;
-        allow create: if signedIn() && request.auth.uid == roomBefore().controllerUid
-          && roomAfter().revision == roomBefore().revision + 1
-          && roomBefore().status in ['lobby','playing']
-          && request.resource.data.keys().hasOnly(['sequence','payload','schemaVersion','type','event'])
-          && request.resource.data.sequence is int
-          && request.resource.data.sequence >= roomBefore().eventCount
-          && request.resource.data.sequence < roomAfter().eventCount
-          && request.resource.data.payload is string && request.resource.data.payload.size() < 60000
-          && (request.resource.data.get('schemaVersion',1) == 1 || (request.resource.data.schemaVersion == 2
-            && validEventFrame(request.resource.data.event,eventId,request.resource.data.type)));
+        function validRoomEvent() {
+          let old = roomBefore();
+          let next = roomAfter();
+          let event = request.resource.data;
+          return request.auth.uid == old.controllerUid && next.revision == old.revision + 1
+            && old.status in ['lobby','rolling','playing']
+            && event.keys().hasOnly(['sequence','payload','schemaVersion','type','event'])
+            && event.sequence is int && event.sequence >= old.eventCount && event.sequence < next.eventCount
+            && event.payload is string && event.payload.size() < 60000
+            && (event.get('schemaVersion',1) == 1 || (event.schemaVersion == 2
+              && validEventFrame(event.event,eventId,event.type)));
+        }
+        allow create: if signedIn() && validRoomEvent();
         allow update, delete: if false;
       }
     }
+    // Sharing publishes a separate, opt-in copy. Private campaigns stay owner-only.
+    match /liveGames/{gameId} {
+      function validShare() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['version','ownerUid','gameId','payload','updatedAt'])
+          && d.version == 1 && d.ownerUid == request.auth.uid && d.gameId == gameId
+          && gameId.matches('^[A-Za-z0-9_-]{1,60}$')
+          && d.payload is string && d.payload.size() <= 500000
+          && d.updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid)/games/$(gameId));
+      }
+      allow get: if true;
+      // Anonymous visitors get a known share by ID; only an owner may query their own opt-ins.
+      allow list: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if signedIn() && validShare();
+      allow update: if owner(resource.data.ownerUid) && validShare()
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if owner(resource.data.ownerUid);
+    }
     match /users/{uid}/games/{gameId} {
       allow read: if owner(uid);
+      // Legacy campaigns adopt revisions on an ordinary save, then cannot drop or reuse them.
       allow create, update: if owner(uid)
-        && request.resource.data.keys().hasOnly(['payload','updatedAt','schemaVersion','board','name','status','round'])
+        && request.resource.data.keys().hasOnly(['payload','updatedAt','schemaVersion','board',
+          'name','status','round','saveRevision','historyHead'])
         && request.resource.data.payload is string
         && request.resource.data.payload.size() < 700000
         && request.resource.data.updatedAt is number
+        && ((!request.resource.data.keys().hasAny(['saveRevision','historyHead'])) ||
+          (request.resource.data.saveRevision is int && request.resource.data.saveRevision >= 1
+            && request.resource.data.saveRevision <= 9007199254740991
+            && (request.resource.data.historyHead == null ||
+              (request.resource.data.historyHead is string &&
+                request.resource.data.historyHead.matches('^[A-Za-z0-9_-]{1,60}$')))))
+        && (!exists(/databases/$(database)/documents/users/$(uid)/games/$(gameId)) ||
+          resource.data.get('saveRevision',0) == 0 ||
+          request.resource.data.get('saveRevision',0) == resource.data.saveRevision + 1)
         && (request.resource.data.get('schemaVersion',1) == 1 || (request.resource.data.schemaVersion == 2
           && validBoard(request.resource.data.board) && request.resource.data.board.id == gameId
           && request.resource.data.name == request.resource.data.board.name
@@ -195,8 +482,13 @@ service cloud.firestore {
           && request.resource.data.round == request.resource.data.board.round));
       match /events/{eventId} {
         allow read: if owner(uid);
+        // Uploading facts separately permits large histories; the board head selects committed facts.
         allow create: if owner(uid)
-          && request.resource.data.keys().hasOnly(['sequence','type','context','payload','schemaVersion','event','facts'])
+          && request.resource.data.keys().hasOnly(['sequence','type','context','payload',
+            'schemaVersion','event','facts','previousEventId'])
+          && (request.resource.data.get('previousEventId',null) == null ||
+            (request.resource.data.previousEventId is string &&
+              request.resource.data.previousEventId.matches('^[A-Za-z0-9_-]{1,60}$')))
           && request.resource.data.sequence is int && request.resource.data.sequence >= 0
           && request.resource.data.type is string
           && request.resource.data.context is string && request.resource.data.context.size() < 60000
@@ -209,7 +501,9 @@ service cloud.firestore {
         allow read: if owner(uid);
         allow create: if owner(uid) && validAIReport(eventId)
           && exists(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId))
-          && request.resource.data.eventType == get(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)).data.type;
+          && request.resource.data.eventType == get(
+            /databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)
+          ).data.type;
         allow update, delete: if false;
       }
       match /commentary/{eventId} {
@@ -220,7 +514,9 @@ service cloud.firestore {
         allow read: if owner(uid);
         allow create: if owner(uid) && validAIReportV2(eventId)
           && exists(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId))
-          && request.resource.data.eventType == get(/databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)).data.type;
+          && request.resource.data.eventType == get(
+            /databases/$(database)/documents/users/$(uid)/games/$(gameId)/events/$(eventId)
+          ).data.type;
         allow update, delete: if false;
       }
     }

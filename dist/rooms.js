@@ -2,6 +2,16 @@ import { GameEngine } from './engine.js';
 import { commanders } from './data.js';
 import { playerNickname } from './profile.js';
 import {
+  chooseRoomCountry,
+  prepareRoomRolls,
+  rollRoomInitiative,
+  rerollRoomInitiative,
+  openingDie,
+  openingLeaders,
+  validateRoomSetup,
+} from './room-setup.js';
+export { chooseRoomCountry, prepareRoomRolls, rollRoomInitiative, rerollRoomInitiative };
+import {
   RECORD_VERSION,
   validateGameBoard,
   validateGameEvent,
@@ -12,12 +22,14 @@ import {
 
 export const ROOM_CAPACITY = 10;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** Generate a six-character invitation code without visually ambiguous characters. */
 export function roomCode(source = globalThis.crypto) {
   return Array.from(
     source.getRandomValues(new Uint8Array(6)),
     (n) => alphabet[n % alphabet.length],
   ).join('');
 }
+/** Normalize a typed invitation and reject values outside the room-code alphabet. */
 export function normalizeRoomCode(value) {
   const code = String(value || '')
     .trim()
@@ -33,6 +45,7 @@ const roomPlayerNames = (room) =>
       room.members[room.memberIds[seat]]?.name ||
       `Bot ${commanders[seat] === 'You' ? 'Meridian' : commanders[seat]}`,
   );
+/** Reserve the host’s lobby seat; bots fill the remaining seats only when play starts. */
 export function newRoom(code, user, { name = 'Friends campaign', difficulty = 'medium' } = {}) {
   const now = Date.now();
   return {
@@ -40,6 +53,9 @@ export function newRoom(code, user, { name = 'Friends campaign', difficulty = 'm
     hostUid: user.uid,
     memberIds: [user.uid],
     members: { [user.uid]: { name: playerName(user) } },
+    setupVersion: 1,
+    countryChoices: {},
+    initiative: null,
     name: String(name).trim().slice(0, 50) || 'Friends campaign',
     difficulty: ['easy', 'medium', 'hard', 'extreme'].includes(difficulty) ? difficulty : 'medium',
     status: 'lobby',
@@ -53,6 +69,7 @@ export function newRoom(code, user, { name = 'Friends campaign', difficulty = 'm
     payload: '',
   };
 }
+/** Add a lobby member once, or reconnect an existing participant without changing their seat. */
 export function joinRoom(room, user) {
   if (room.memberIds.includes(user.uid)) {
     if (room.status === 'closed') throw new Error('This room has been closed.');
@@ -68,6 +85,7 @@ export function joinRoom(room, user) {
     revision: room.revision + 1,
   };
 }
+/** Remove a lobby guest or close the host’s lobby; started matches keep their seats. */
 export function leaveRoom(room, uid) {
   if (room.status !== 'lobby')
     throw new Error('Started matches keep your seat. Use the room code to reconnect.');
@@ -76,26 +94,58 @@ export function leaveRoom(room, uid) {
     return { ...room, status: 'closed', updatedAt: Date.now(), revision: room.revision + 1 };
   const members = { ...room.members };
   delete members[uid];
+  const countryChoices = { ...room.countryChoices };
+  delete countryChoices[uid];
   return {
     ...room,
     members,
+    ...(room.countryChoices ? { countryChoices } : {}),
     memberIds: room.memberIds.filter((id) => id !== uid),
     updatedAt: Date.now(),
     revision: room.revision + 1,
   };
 }
+/** Let the host create the board and starting order after everyone has joined. */
 export function startRoom(room, uid) {
+  validateRoomSetup(room);
   if (uid !== room.hostUid) throw new Error('Only the host can start the match.');
-  if (room.status !== 'lobby') throw new Error('This match has already started.');
-  const game = GameEngine.create(room.name, 'ZA', false, room.difficulty);
+  if (!['lobby', 'rolling'].includes(room.status))
+    throw new Error('This match has already started.');
+  const setup = room.setupVersion === 1 ? room.initiative : null;
+  if (
+    room.setupVersion === 1 &&
+    (room.status !== 'rolling' ||
+      !setup?.winner ||
+      openingLeaders(setup).length !== 1 ||
+      openingLeaders(setup)[0] !== setup.winner)
+  )
+    throw new Error('Finish the opening dice rolls before starting the match.');
+  const game = GameEngine.create(
+    room.name,
+    setup?.countries[0] || 'ZA',
+    false,
+    room.difficulty,
+    null,
+    setup
+      ? {
+          countries: setup.countries,
+          firstSeat: setup.players.indexOf(setup.winner),
+        }
+      : null,
+  );
   game.mode = 'multiplayer';
   game.status = 'active';
   game.playerNames = roomPlayerNames(room);
+  // Replace the generic initial turn with one using the finalized multiplayer participant names.
   game.events = [];
   game.turnStarted = false;
   new GameEngine(game).beginTurn();
   return createRoomUpdate(room, game, game.events);
 }
+/**
+ * Advance room revision, event count and controller together, retaining a bounded board
+ * history.
+ */
 function createRoomUpdate(room, game, events) {
   const currentSeat = game.order[game.position];
   const recentGame = { ...game, events: game.events.slice(-80) };
@@ -127,7 +177,9 @@ export function readRoomGame(room) {
   }
 }
 
+/** Validate the game schema and its agreement with room membership and turn metadata. */
 function parseRoomGame(room) {
+  validateRoomSetup(room);
   if (
     room.schemaVersion !== undefined &&
     room.schemaVersion !== 1 &&
@@ -151,22 +203,83 @@ function parseRoomGame(room) {
     throw new Error('The room membership, turn or history does not match its game state.');
   const codes = new Set(game.countries.map((country) => country.code));
   for (const event of game.events) validateGameEvent(event, codes);
+  if (
+    room.setupVersion === 1 &&
+    (game.order[0] !== room.initiative.players.indexOf(room.initiative.winner) ||
+      game.countries.some((country, seat) => country.code !== room.initiative.countries[seat]))
+  )
+    throw new Error('The starting countries or turn order do not match the opening rolls.');
   game.playerNames = roomPlayerNames(room);
   game.mode = 'multiplayer';
   return game;
 }
 
+/** Dual-write typed room state and its legacy payload for compatible readers. */
 export function roomRecord(room) {
   const board = room.payload ? JSON.parse(room.payload) : null;
   return { ...room, schemaVersion: RECORD_VERSION, board: board ? encodeBoard(board) : null };
 }
-function executeNpcTransfers(engine) {
-  for (const move of engine.npcTransfers()) {
-    engine.event('decision', move.reason);
-    engine.transfer(move.from, move.to, move.amount);
+/** Choose one legal bot action and its explanation without changing the game. */
+function nextNpcMove(engine) {
+  if (engine.game.budget) {
+    const plan = engine.npcReinforcements();
+    return { action: 'reinforce', values: { allocations: plan.allocations }, reason: plan.reason };
+  }
+  if (engine.game.battle) {
+    const plan = engine.npcBattleDecision({ phaseLimit: 30 });
+    return { action: plan.continue ? 'roll' : 'retreat', reason: plan.reason };
+  }
+  const move = engine.npcTransfers()[0];
+  if (move)
+    return {
+      action: 'transfer',
+      values: { from: move.from, to: move.to, amount: move.amount },
+      reason: move.reason,
+    };
+  if (!engine.game.attackUsed) {
+    const plan = engine.npcPlan();
+    return {
+      action: plan.from ? 'attack' : 'end',
+      values: plan.from ? { from: plan.from.code, to: plan.to.code } : {},
+      reason: plan.reason,
+    };
+  }
+  return { action: 'end' };
+}
+
+/** Route both human moves and persisted bot intentions through the normal game rules. */
+function executeMove(engine, action, values = {}, humanCount = 1) {
+  switch (action) {
+    case 'reinforce':
+      if (!engine.game.budget) throw new Error('There are no reinforcements to deploy.');
+      engine.reinforce(values.allocations);
+      break;
+    case 'transfer':
+      engine.transfer(values.from, values.to, values.amount);
+      break;
+    case 'attack':
+      engine.startAttack(values.from, values.to);
+      break;
+    case 'alliance':
+      engine.proposeAlliance(values.target, { humanCount });
+      break;
+    case 'roll':
+      if (!engine.game.battle) throw new Error('No battle is in progress.');
+      engine.roll();
+      break;
+    case 'retreat':
+      if (!engine.game.battle) throw new Error('No battle is in progress.');
+      engine.stopAttack();
+      break;
+    case 'end':
+      engine.endTurn();
+      break;
+    default:
+      throw new Error('Unknown multiplayer move.');
   }
 }
 
+/** Reject stale or unauthorized moves, announcing bot intentions before executing them. */
 export function moveRoom(room, uid, revision, action, values = {}) {
   if (room.status !== 'playing') throw new Error('This match is not active.');
   if (room.revision !== revision)
@@ -178,55 +291,26 @@ export function moveRoom(room, uid, revision, action, values = {}) {
   const bot = engine.current >= room.memberIds.length;
   if (bot) {
     if (action !== 'bot' || uid !== room.hostUid) throw new Error('The host controls bot turns.');
-    if (game.budget) {
-      const plan = engine.npcReinforcements();
-      engine.event('decision', plan.reason);
-      engine.reinforce(plan.allocations);
-    } else if (game.battle) {
-      const plan = engine.npcBattleDecision({ phaseLimit: 30 });
-      if (!plan.continue) {
-        engine.event('decision', plan.reason);
-        engine.stopAttack();
-      } else engine.roll();
-    } else if (!game.attackUsed) {
-      executeNpcTransfers(engine);
-      const plan = engine.npcPlan();
-      engine.event('decision', plan.reason);
-      if (plan.from) engine.startAttack(plan.from.code, plan.to.code);
-      else engine.endTurn();
+    // Intention and execution use separate commits so every browser gets the same reading pause.
+    const decision = game.events.at(-1);
+    if (
+      decision?.type === 'decision' &&
+      decision.player === engine.current &&
+      decision.round === game.round &&
+      decision.intent
+    ) {
+      executeMove(engine, decision.intent.action, decision.intent.values, room.memberIds.length);
     } else {
-      executeNpcTransfers(engine);
-      engine.endTurn();
+      const plan = nextNpcMove(engine);
+      if (plan.reason) {
+        const { reason, ...intent } = plan;
+        engine.event('decision', reason, { intent });
+      } else executeMove(engine, plan.action, plan.values, room.memberIds.length);
     }
-  } else {
-    switch (action) {
-      case 'reinforce':
-        if (!game.budget) throw new Error('There are no reinforcements to deploy.');
-        engine.reinforce(values.allocations);
-        break;
-      case 'transfer':
-        engine.transfer(values.from, values.to, values.amount);
-        break;
-      case 'attack':
-        engine.startAttack(values.from, values.to);
-        break;
-      case 'roll':
-        if (!game.battle) throw new Error('No battle is in progress.');
-        engine.roll();
-        break;
-      case 'retreat':
-        if (!game.battle) throw new Error('No battle is in progress.');
-        engine.stopAttack();
-        break;
-      case 'end':
-        engine.endTurn();
-        break;
-      default:
-        throw new Error('Unknown multiplayer move.');
-    }
-  }
+  } else executeMove(engine, action, values, room.memberIds.length);
   return createRoomUpdate(room, game, game.events.slice(previousEventCount));
 }
+/** Commit room state and new events in one transaction and own the subscription cleanup. */
 export function createRoomService({ db, sdk, getUser, onEvents = () => {} }) {
   const { doc, collection, runTransaction, onSnapshot } = sdk;
   const user = () => {
@@ -289,6 +373,36 @@ export function createRoomService({ db, sdk, getUser, onEvents = () => {} }) {
         persist(tx, target, startRoom(snap.data(), account.uid));
       });
     },
+    /** Serialize country reservations and opening rolls against the latest lobby revision. */
+    async setup(code, action, country, expectedRound) {
+      const account = user(),
+        target = ref(code),
+        // Draw once outside the retryable transaction so retries cannot change this human's roll.
+        face = action === 'roll' ? openingDie() : null;
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(target);
+        if (!snap.exists()) throw new Error('Room not found.');
+        const room = snap.data();
+        if (
+          ['roll', 'reroll'].includes(action) &&
+          expectedRound !== undefined &&
+          room.initiative?.round !== expectedRound
+        )
+          throw new Error('The opening round changed. Review the latest dice before rolling.');
+        const next =
+          action === 'country'
+            ? chooseRoomCountry(room, account.uid, country)
+            : action === 'prepare'
+              ? prepareRoomRolls(room, account.uid)
+              : action === 'roll'
+                ? rollRoomInitiative(room, account.uid, face)
+                : action === 'reroll'
+                  ? rerollRoomInitiative(room, account.uid)
+                  : null;
+        if (!next) throw new Error('Unknown lobby action.');
+        tx.set(target, next);
+      });
+    },
     async move(code, revision, action, values) {
       const account = user(),
         target = ref(code);
@@ -309,6 +423,7 @@ export function createRoomService({ db, sdk, getUser, onEvents = () => {} }) {
           try {
             if (room?.payload) {
               const game = readRoomGame(room);
+              // The first snapshot restores state; only later increments create new AI tasks.
               if (previousEventCount !== null && room.eventCount > previousEventCount)
                 onEvents(
                   code,

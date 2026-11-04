@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=IBM+Plex+Mono:wght@400;450;500;600&display=swap');
+/* Shared theme tokens; feature stylesheets reuse these colours, spacing and typography. */
 :root {
   color-scheme: dark;
   --bg: #0b1220;
@@ -56,6 +57,7 @@ input,
 select {
   outline-offset: 4px;
 }
+/* Keep keyboard focus visible without showing the outline after ordinary pointer clicks. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -189,6 +191,7 @@ button {
   color: var(--subtle);
   letter-spacing: 0.08em;
 }
+/* Shared control styles keep links and buttons consistent across all composed views. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -368,6 +371,9 @@ button {
 .hero h1 .outline-word {
   color: var(--gold-light);
 }
+.hero h1 .briefing-line {
+  display: block;
+}
 .hero-copy > p {
   color: var(--muted);
   max-width: 410px;
@@ -423,6 +429,7 @@ button {
   position: relative;
   isolation: isolate;
 }
+/* Keep the SVG projection proportional. Pinned-report sizing changes the whole card instead. */
 .world-map {
   display: block;
   width: 100%;
@@ -466,12 +473,14 @@ button {
 .map-label-leader {
   display: none;
   stroke: var(--marker);
-  stroke-width: 1;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: none;
   vector-effect: non-scaling-stroke;
-  opacity: 0.65;
+  opacity: 1;
   pointer-events: none;
 }
-.reports-map-compact .map-label-leader:not([hidden]) {
+.map-label-leader:not([hidden]) {
   display: inline;
 }
 .map-marker.interactive {
@@ -859,8 +868,18 @@ label.field-label {
   flex: 1;
   font-size: 13px;
 }
-.country-option .flag {
-  font-size: 22px;
+/* Local images keep flags visible independently of the browser's flag-emoji fonts. */
+.country-flag {
+  display: inline-block;
+  width: 24px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.country-option .country-flag {
+  width: 28px;
+  height: 21px;
 }
 .country-option .strength {
   font: 11px var(--mono);
@@ -1111,6 +1130,7 @@ label.field-label {
   text-decoration: line-through;
   opacity: 0.4;
 }
+/* Desktop roster / map / action columns; later breakpoints stack them on smaller screens. */
 .board-grid {
   display: grid;
   grid-template-columns: 218px minmax(0, 1fr) 296px;
@@ -1131,6 +1151,18 @@ label.field-label {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+/* Separate each owner's countries without changing the existing rows or player colours. */
+.country-roster {
+  display: grid;
+  align-items: start;
+  gap: 6px;
+  padding: 6px;
+}
+.country-owner-group {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
 }
 .country-row {
   display: flex;
@@ -1157,9 +1189,17 @@ label.field-label {
 .country-row.owned .country-owner {
   color: var(--teal);
 }
-.country-row .flag {
-  font-size: 18px;
-  line-height: 1.4;
+/* Keep the flag and ISO code together so names and troop counts retain their grid columns. */
+.country-identity {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font: 600 10px/1 var(--mono);
+}
+.country-identity .country-flag {
+  width: 20px;
+  height: 15px;
 }
 .country-name {
   font-size: 11px;
@@ -1224,6 +1264,11 @@ label.field-label {
   padding: 8px 12px;
   min-height: 38px;
 }
+/* Reserve a square control beside Skip turn while keeping Rules aligned at the far edge. */
+.board-actions .copy-live-link {
+  flex: 0 0 38px;
+  padding: 8px;
+}
 .board-actions .btn:last-child {
   margin-left: auto;
 }
@@ -1244,6 +1289,7 @@ label.field-label {
 html.reports-docked body {
   padding-bottom: var(--reports-dock-height, 0px);
 }
+/* Dock geometry is measured by ui/reports.js; body padding reserves space below the page. */
 .reports-panel.is-pinned {
   position: fixed;
   left: var(--reports-dock-left, 12px);
@@ -1277,14 +1323,15 @@ html.reports-docked body {
 .reports-panel.is-pinned[data-reports-collapsed='true'] {
   height: auto;
 }
-.reports-map-compact .map-viewport {
+/* Shrink the complete map card above expanded reports, avoiding blank strips beside the SVG. */
+.reports-map-expanded .theatre {
   width: min(100%, var(--reports-map-width));
   margin-inline: auto;
 }
-.reports-map-compact .theatre .world-map {
+.reports-map-expanded .theatre .world-map {
   min-height: 0;
 }
-.reports-map-compact .map-marker text {
+.reports-map-expanded .map-marker text {
   font-size: var(--reports-map-font-size);
 }
 .reports-panel[data-reports-collapsed='true'] .commentary-actions > .badge,
@@ -1335,7 +1382,8 @@ html.reports-docked body {
   gap: 11px;
   padding: 12px 0;
   border-bottom: 1px solid #2634488c;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
 }
 .activity-row:last-child {
   border-bottom: 0;
@@ -1364,16 +1412,17 @@ html.reports-docked body {
 }
 .activity-copy .event-meta {
   display: block;
-  font: 8px var(--mono);
+  font: 10px var(--mono);
   color: var(--subtle);
   margin-top: 3px;
 }
 .activity-time {
-  font: 8px var(--mono);
+  font: 10px var(--mono);
   color: var(--subtle);
   white-space: nowrap;
   padding-top: 3px;
 }
+/* The current phase stays reachable beside the map; breakpoints below handle stacked layouts. */
 .action-panel {
   padding: 20px;
   min-height: 340px;
@@ -1435,10 +1484,10 @@ html.reports-docked body {
   margin: 14px 0;
 }
 .allocation-name {
-  font-size: 11px;
+  font-size: 12px;
 }
 .allocation-name .small {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--subtle);
 }
 .stepper {
@@ -1452,8 +1501,8 @@ html.reports-docked body {
   justify-content: center;
   background: var(--raised);
   border: 1px solid var(--line-bright);
-  width: 27px;
-  height: 29px;
+  width: 32px;
+  height: 34px;
   border-radius: 3px;
   font-size: 16px;
 }
@@ -1465,7 +1514,40 @@ html.reports-docked body {
 .action-helper {
   margin-top: 13px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.diplomacy-pact,
+.diplomacy-result {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.diplomacy-pact h3 {
+  margin: 10px 0 6px;
+  font-size: 18px;
+}
+.diplomacy-trust {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 12px;
+}
+.diplomacy-result p {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.alliance-warning {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid #d4af3750;
+  border-radius: 4px;
+  color: var(--gold-light);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .selected-unit {
   border: 1px solid var(--line-bright);
@@ -1636,6 +1718,7 @@ html.reports-docked body {
   color: var(--gold-light);
   font-size: 12px;
 }
+/* Replay has its own timeline layout and reuses the normal map and action presentation. */
 .history-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
@@ -1699,6 +1782,7 @@ html.reports-docked body {
   color: var(--gold-light);
   min-width: 20px;
 }
+/* Feedback floats above the board instead of shifting controls when its text changes. */
 .toast {
   position: fixed;
   z-index: 20;
@@ -1821,9 +1905,6 @@ dialog::backdrop {
   }
   .auth-workspace {
     gap: 50px;
-  }
-  .country-row .flag {
-    font-size: 16px;
   }
   .country-name {
     font-size: 10px;
@@ -2122,9 +2203,6 @@ dialog::backdrop {
     grid-template-columns: 20px 1fr;
     border-right: 1px solid var(--line);
   }
-  .country-row .flag {
-    font-size: 17px;
-  }
   .country-row .army-count {
     font-size: 13px;
     text-align: right;
@@ -2360,9 +2438,6 @@ dialog::backdrop {
     grid-template-columns: 16px 1fr;
     padding: 6px 4px;
   }
-  .country-row .flag {
-    font-size: 15px;
-  }
   .country-row .country-name {
     font-size: 7px;
   }
@@ -2425,15 +2500,20 @@ dialog::backdrop {
   .country-roster {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  /* Keep the original compact grid so a sticky roster leaves room for pinned reports. */
+  html.reports-docked .country-roster {
+    gap: 0;
+    padding: 0;
+  }
+  html.reports-docked .country-owner-group {
+    display: contents;
+  }
   .country-row {
     display: grid;
     grid-template-columns: 23px minmax(0, 1fr) 27px;
     padding: 6px 9px;
     gap: 7px;
     min-height: 43px;
-  }
-  .country-row .flag {
-    font-size: 19px;
   }
   .country-row .country-name {
     grid-column: 2;
@@ -2460,6 +2540,7 @@ dialog::backdrop {
     font-size: 8px;
   }
 }
+/* Preserve explicit full-motion choice while honoring the system preference by default. */
 @media (prefers-reduced-motion: reduce) {
   html:not([data-motion='full']) {
     scroll-behavior: auto;

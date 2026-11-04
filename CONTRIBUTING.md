@@ -6,17 +6,22 @@ that directory's conventional name. Do not minify or hand-edit generated assets.
 
 ## Module boundaries
 
-| Location                                                | Responsibility                                                   |
-| ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `dist/app.js`                                           | Compose services, session state, routing and rendering           |
-| `dist/ui/`                                              | Shared components, navigation, maps, campaign and battle screens |
-| `dist/controllers/`                                     | UI actions and asynchronous NPC playback                         |
-| `dist/engine.js`, `dist/npc-strategy.js`                | Game rules and opponent decisions                                |
-| `dist/motion.js`, `dist/audio.js`                       | Presentation timing and sound; never calculate combat results    |
-| `dist/cloud.js`, `dist/rooms.js`                        | Account-scoped persistence, room transactions and subscriptions  |
-| `dist/game-schema.js`                                   | Storage codecs, trusted country metadata and record validation   |
-| `dist/commentary.js`                                    | Event-time AI context, bounded queue, caching and fallback       |
-| `dist/populations.js`, `scripts/update-populations.mjs` | Validated population snapshots and source updates                |
+See [architecture](docs/ARCHITECTURE.md), [database design](docs/DATABASE.md) and
+[assessment evidence](docs/ASSESSMENT.md) for diagrams and demonstration checks.
+
+| Location                                                        | Responsibility                                                   |
+| --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `dist/app.js`                                                   | Compose services, session state, routing and rendering           |
+| `dist/ui/`                                                      | Shared components, navigation, maps, campaign and battle screens |
+| `dist/controllers/`                                             | UI actions and asynchronous NPC playback                         |
+| `dist/engine.js`, `dist/npc-strategy.js`                        | Game rules and opponent decisions                                |
+| `dist/motion.js`, `dist/audio.js`                               | Presentation timing and sound; never calculate combat results    |
+| `dist/cloud.js`, `dist/rooms.js`                                | Account services, room transactions and subscriptions            |
+| `dist/campaign-store.js`, `dist/campaign-history.js`            | Lazy histories, private record state and versioned commits       |
+| `dist/controllers/campaigns.js`, `dist/controllers/settings.js` | Recovery, selected-campaign loading and settings edits           |
+| `dist/game-schema.js`                                           | Storage codecs, trusted country metadata and record validation   |
+| `dist/commentary.js`                                            | Event-time AI context, bounded queue, caching and fallback       |
+| `dist/populations.js`, `scripts/update-populations.mjs`         | Validated population snapshots and source updates                |
 
 Views receive their changing application dependencies through a context. Its
 getters resolve the current session, campaign and animation frame at call time;
@@ -29,6 +34,27 @@ that change with the session or animation. Reuse existing functions for repeated
 behavior, choose names that describe intent, and add abstractions only when they
 make the code easier to follow. Preserve gameplay and save compatibility when
 refactoring.
+
+Document public functions and non-obvious helpers with a short purpose comment.
+Explain constraints at the relevant block: account-generation guards, immutable
+history, compatible save formats, reading pauses and delayed dice results. A
+comment should describe intent or a dependency that is easy to miss, rather than
+repeat each statement. Update comments when changing behavior. Each test should
+have a concise purpose comment explaining the regression or user guarantee it
+protects, with extra comments for unusual fixtures, simulated failures and races.
+Getters, simple delegates and obvious assertions do not need line-by-line narration.
+
+Use a 100-character formatting target and keep maintained JavaScript within the
+120-character lint limit, including templates. URLs and regular expressions are
+exceptions. Embedded HTML formatting is disabled to preserve the exact whitespace
+already emitted by views. Selected templates use `prettier-ignore` to retain
+readable multiline interpolations; the line-length rule still checks them. When
+reflowing a string, preserve its text and spaces, including in AI instructions.
+
+Keep shared game calculations in one place. `conquestReward` and `armyValue` in
+`dist/data.js` are used by the engine and planning code; `mergeCampaigns` preserves
+the newest account save during both partial and complete loads. Browser scripts
+share `scripts/lib/static-server.mjs` rather than duplicating HTTP servers.
 
 Keep nicknames and source labels escaped before inserting HTML. Factual events
 are immutable and must exclude generated commentary. Rendering and animation
@@ -84,7 +110,11 @@ it does not provide complete anti-cheat. Do not describe App Check or client
 validation as proof of fair gameplay.
 
 Campaign boards adopt version 2 during ordinary saves; loading history does not
-rewrite event documents. Publish the updated frontend before inviting people
+rewrite event documents. New saves stage immutable events with predecessor links
+then commit a revision and history head in a transaction. Readers follow that
+head, excluding uncommitted branches. Once versioned, a board cannot accept a
+stale revision or an older writer that omits its revision. Histories load in
+250-document pages only when selected; a failed history never blocks another game. Publish the updated frontend before inviting people
 using an older hosted client into new version 2 rooms.
 
 ## Tooling and private configuration

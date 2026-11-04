@@ -1,4 +1,71 @@
 /* Event effects share the existing action pauses and never alter game rules. */
+/* One welcome briefing: reserve the final layout and resume its clock across redraws. */
+.briefing-reveal > .eyebrow::before {
+  transform-origin: left;
+  animation: briefing-rule 260ms ease-out calc(0ms - var(--briefing-elapsed)) both;
+}
+.briefing-reveal .briefing-line {
+  animation: briefing-copy 420ms cubic-bezier(0.2, 0.7, 0.3, 1)
+    calc(120ms - var(--briefing-elapsed)) both;
+}
+.briefing-reveal .briefing-line:nth-of-type(2) {
+  animation-delay: calc(270ms - var(--briefing-elapsed));
+}
+.briefing-reveal .briefing-line.outline-word {
+  animation:
+    briefing-copy 420ms cubic-bezier(0.2, 0.7, 0.3, 1) calc(420ms - var(--briefing-elapsed)) both,
+    briefing-shimmer 550ms ease-in-out calc(650ms - var(--briefing-elapsed)) both;
+}
+.briefing-reveal > p,
+.briefing-reveal .hero-actions,
+.briefing-reveal .hero-footnotes {
+  animation: briefing-copy 420ms ease-out calc(780ms - var(--briefing-elapsed)) both;
+}
+@keyframes briefing-rule {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes briefing-copy {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes briefing-shimmer {
+  0%,
+  100% {
+    filter: brightness(1);
+    text-shadow: 0 0 0 transparent;
+  }
+  50% {
+    filter: brightness(1.2);
+    text-shadow: 0 0 18px #e9cd7655;
+  }
+}
+/* The welcome map has its own cosmetic entrance, separate from battle playback. */
+.hero .theatre {
+  transform-origin: center;
+  animation: welcome-map-reveal 0.8s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes welcome-map-reveal {
+  from {
+    opacity: 0.2;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* Cosmetic overlays must not intercept clicks intended for country markers underneath. */
 .map-effects,
 .map-effects * {
   pointer-events: none;
@@ -272,6 +339,12 @@
 }
 .unit-head {
   fill: var(--unit-colour);
+}
+.unit-plane path {
+  fill: var(--unit-colour);
+  stroke: var(--gold-light);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
 }
 .unit-helmet,
 .unit-body,
@@ -760,6 +833,7 @@ html[data-motion='reduced'] .victory-overlay {
   opacity: 0;
 }
 
+/* Limit moving visuals for large battles; the recorded pairs return when rolling finishes. */
 .dice-rolling[data-rolling='true'] .dice-pair:nth-child(n + 14) {
   visibility: hidden;
 }

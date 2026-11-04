@@ -1,3 +1,4 @@
+/* Lobby and invite forms reuse the main panel styles; these rules add room-specific layout. */
 .room-entry-grid,
 .room-lobby-grid {
   display: grid;
@@ -29,6 +30,7 @@
 .room-action-form h3 {
   font-size: 14px;
 }
+/* Uppercase presentation complements input normalization; it is not room-code validation. */
 .room-code-input {
   text-transform: uppercase;
   font: 600 25px var(--mono);
@@ -96,109 +98,6 @@
 .room-bot strong {
   color: var(--muted);
 }
-.room-turns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 20px 0;
-}
-.room-board-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 22px;
-  margin-bottom: 40px;
-  align-items: start;
-}
-.room-board-grid > div {
-  display: grid;
-  gap: 20px;
-  min-width: 0;
-}
-.room-country-panel {
-  overflow: hidden;
-}
-.room-countries {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-.room-country {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--owner-colour);
-  background: transparent;
-  min-width: 0;
-}
-.room-country > span:first-child {
-  font-size: 21px;
-}
-.room-country > span:nth-child(2) {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-.room-country strong {
-  font-size: 12px;
-}
-.room-country small {
-  font-size: 10px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.room-country b {
-  font: 600 20px var(--mono);
-  color: var(--owner-colour);
-}
-.room-country.selected,
-.room-country:hover {
-  background: var(--raised);
-  outline: 1px solid var(--gold);
-}
-.room-control-panel h2 {
-  font-size: 21px;
-  margin-bottom: 16px;
-}
-.room-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
-}
-.room-allocation {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  justify-content: space-between;
-  font-size: 12px;
-  margin: 14px 0;
-}
-.room-allocation input {
-  max-width: 85px;
-}
-.room-transfer {
-  margin-top: 24px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.room-transfer summary {
-  cursor: pointer;
-}
-.room-dice {
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-  margin-top: 24px;
-}
-.room-dice h3 {
-  font-size: 14px;
-}
-.room-selection {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 16px;
-}
 .room-error {
   border-color: var(--red);
   color: var(--red);
@@ -212,32 +111,28 @@
   color: var(--muted);
   margin: 16px 0;
 }
-.room-board-grid .activity-feed {
-  max-height: 440px;
-  overflow-y: auto;
+
+/* Gameplay uses styles.css; only lobby and opening-roll presentation belongs here. */
+.room-opening {
+  margin: 24px 0;
 }
-.room-board-grid .world-map {
-  min-height: 250px;
+.room-opening h2 {
+  margin: 12px 0;
 }
-@media (max-width: 1000px) {
-  .room-board-grid {
-    grid-template-columns: 1fr 290px;
-  }
-  .room-country {
-    padding: 10px 8px;
-  }
-  .room-country strong {
-    font-size: 11px;
-  }
+.room-opening-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 24px 0;
+}
+.opening-winner {
+  border-color: var(--gold);
 }
 @media (max-width: 760px) {
   .room-entry-grid,
   .room-lobby-grid,
-  .room-board-grid {
+  .room-opening-grid {
     grid-template-columns: 1fr;
-  }
-  .room-control-panel {
-    grid-row: 1;
   }
   .room-code-bar {
     padding: 14px;
@@ -249,17 +144,7 @@
   .room-code-bar .badge {
     font-size: 8px;
   }
-  .room-turns .badge {
-    font-size: 9px;
-  }
-  .room-countries {
-    grid-template-columns: 1fr 1fr;
-  }
   .room-signin {
     padding: 20px;
   }
-}
-.room-turns .badge,
-.room-country-panel .activity-head .badge {
-  text-transform: none;
 }

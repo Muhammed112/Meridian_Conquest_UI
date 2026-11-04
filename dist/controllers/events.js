@@ -4,9 +4,24 @@ import { GameEngine } from '../engine.js';
 import { difficultyFor } from '../difficulty.js';
 import { normalizeNickname } from '../profile.js';
 import { selectReportTab, setReportsDock } from '../ui/reports.js';
+import { applyBoardChoice } from './board-actions.js';
 
 // Register the UI actions once. The application owns state and services.
 export function bindAppEvents(context) {
+  // Redrawing opponents changes only the unsaved setup preview.
+  function redrawSetupGame() {
+    const { state } = context;
+    state.setupGame = GameEngine.create(
+      state.setupName,
+      state.setupStart,
+      false,
+      state.setupDifficulty,
+      context.profile?.name,
+    );
+    context.render();
+  }
+
+  /** Change only report controls so switching tabs does not restart an active battle reveal. */
   function activateReportTab(button) {
     const panel = button.closest('[data-reports-panel]');
     if (context.state.reportDock.pinned) {
@@ -15,6 +30,8 @@ export function bindAppEvents(context) {
     }
     context.state.reportTab = button.dataset.reportTab;
     selectReportTab(panel, context.state.reportTab);
+    if (context.tutorial?.afterAction('report-tab', { tab: context.state.reportTab }))
+      context.render();
   }
   document.addEventListener('click', async (event) => {
     const reportControl = event.target.closest('[data-report-control]');
@@ -32,6 +49,7 @@ export function bindAppEvents(context) {
       activateReportTab(reportTab);
       return;
     }
+    // Shared-board actions must reach room transactions before local single-player handlers.
     if (await context.multiplayer.handleClick(event)) return;
     const button = event.target.closest('[data-action]');
     if (!button) {
@@ -42,6 +60,22 @@ export function bindAppEvents(context) {
     const action = button.dataset.action,
       g = context.currentGame();
     try {
+      if (action.startsWith('tutorial-')) {
+        if (!context.tutorial) return;
+        if (action === 'tutorial-next' && !rollPending(context.motionFrame)) {
+          context.tutorial.advance();
+          context.state.npcNote = '';
+          context.render();
+        }
+        if (action === 'tutorial-skip') context.finishTutorial();
+        if (action === 'tutorial-finish' && context.tutorial.step === 'complete')
+          context.finishTutorial('completed', button.dataset.destination || 'setup');
+        return;
+      }
+      if (context.tutorial && !context.tutorial.allows(action)) {
+        context.notify('Follow the current tutorial step, or select Skip tutorial.');
+        return;
+      }
       if (
         rollPending(context.motionFrame) &&
         [
@@ -52,11 +86,13 @@ export function bindAppEvents(context) {
           'confirm-transfer',
           'start-attack',
           'confirm-reinforce',
+          'propose-alliance',
           'continue-npcs',
         ].includes(action)
       )
         return;
       if (action === 'request-commentary') {
+        if (context.state.watch || context.state.liveShareId) return;
         const count = context.cloud?.requestCommentary(g) || 0;
         context.notify(
           count
@@ -74,6 +110,20 @@ export function bindAppEvents(context) {
         await context.cloud.reload();
         return;
       }
+      if (action === 'retry-campaign-history') {
+        await context.campaignController.open({ retry: true });
+        return;
+      }
+      if (action === 'retry-live') {
+        context.reconnectLive();
+        return;
+      }
+      if (action === 'stop-sharing') {
+        await context.liveShares.stop(button.dataset.id);
+        context.render();
+        context.notify('Live sharing stopped. The old link no longer shows your game.');
+        return;
+      }
       if (action === 'clear-campaign-filters') {
         context.state.filter = 'all';
         context.state.search = '';
@@ -87,6 +137,7 @@ export function bindAppEvents(context) {
       }
       if (
         cloudEnabled &&
+        context.state.view !== 'tutorial' &&
         [
           'create-game',
           'fast',
@@ -97,11 +148,12 @@ export function bindAppEvents(context) {
           'confirm-reinforce',
           'confirm-transfer',
           'start-attack',
+          'propose-alliance',
           'roll',
           'stop-attack',
           'end-turn',
         ].includes(action) &&
-        (!context.cloud?.user || !context.cloudReady)
+        (!context.cloud?.user || !context.cloudReady || (g && !context.campaignReady(g)))
       ) {
         context.notify(
           context.cloud?.user
@@ -117,6 +169,7 @@ export function bindAppEvents(context) {
         context.syncAudioControls();
         context.syncAIControls();
         document.getElementById('settings-dialog').showModal();
+        context.tutorial?.afterAction('settings');
         return;
       }
       if (action === 'close-settings') {
@@ -162,7 +215,9 @@ export function bindAppEvents(context) {
           window.history.replaceState(
             null,
             '',
-            `#${context.state.view}${context.state.gameId ? '/' + context.state.gameId : ''}`,
+            context.state.liveShareId && context.state.view === 'game'
+              ? `#live/${context.state.liveShareId}`
+              : `#${context.state.view}${context.state.gameId ? '/' + context.state.gameId : ''}`,
           );
         return;
       }
@@ -181,25 +236,11 @@ export function bindAppEvents(context) {
       }
       if (action === 'setup-country') {
         context.state.setupStart = button.dataset.code;
-        context.state.setupGame = GameEngine.create(
-          context.state.setupName,
-          context.state.setupStart,
-          false,
-          context.state.setupDifficulty,
-          context.profile?.name,
-        );
-        context.render();
+        redrawSetupGame();
         return;
       }
       if (action === 'redraw-roster') {
-        context.state.setupGame = GameEngine.create(
-          context.state.setupName,
-          context.state.setupStart,
-          false,
-          context.state.setupDifficulty,
-          context.profile?.name,
-        );
-        context.render();
+        redrawSetupGame();
         context.notify('Nine distinct rivals redrawn.');
         return;
       }
@@ -250,7 +291,7 @@ export function bindAppEvents(context) {
                 context.replayTimer = null;
               }
               context.render();
-            }, 1000);
+            }, 5000);
           }
         }
         context.render();
@@ -258,14 +299,12 @@ export function bindAppEvents(context) {
       }
       if (!g) return;
       if (action === 'select-country') {
-        const c = g.countries.find((c) => c.code === button.dataset.code);
-        if (!c) return;
-        context.state.selected = c.code;
-        if (c.owner === 0 && !g.battle) context.state.origin = c.code;
-        else if (c.owner !== 0 && !g.battle) context.state.target = c.code;
+        applyBoardChoice(g, context.state, 0, action, button.dataset.code);
+        context.tutorial?.afterAction(action, { code: button.dataset.code });
         context.render();
         return;
       }
+      // Visitors may inspect countries and reports, but never invoke the mutable game engine.
       if (context.state.watch) return;
       if (action === 'fast') {
         context.state.fast = !context.state.fast;
@@ -281,21 +320,17 @@ export function bindAppEvents(context) {
       }
       const e = context.engine();
       if (e.current !== 0 || g.winner !== null) return;
-      if (action === 'allocate-plus') {
-        const used = Object.values(context.state.allocations).reduce((a, b) => a + b, 0);
-        if (used < g.budget)
-          context.state.allocations[button.dataset.code] =
-            (context.state.allocations[button.dataset.code] || 0) + 1;
+      applyBoardChoice(g, context.state, 0, action, button.dataset.code);
+      if (action === 'diplomacy') {
+        context.render();
+        return;
       }
-      if (action === 'allocate-minus')
-        context.state.allocations[button.dataset.code] = Math.max(
-          0,
-          (context.state.allocations[button.dataset.code] || 0) - 1,
+      if (action === 'propose-alliance') {
+        const result = e.proposeAlliance(
+          Number(document.getElementById('diplomacy-target')?.value),
         );
-      if (action === 'auto-allocate') {
-        context.state.allocations = {
-          [e.owned().sort((a, b) => b.army - a.army)[0].code]: g.budget,
-        };
+        context.state.action = 'diplomacy';
+        context.notify(result.accepted ? 'Alliance agreed for three rounds.' : result.reason);
       }
       if (action === 'confirm-reinforce') {
         e.reinforce(context.state.allocations);
@@ -303,14 +338,6 @@ export function bindAppEvents(context) {
         context.state.action = 'planning';
         context.notify('Reinforcements deployed. Your next move is ready.');
       }
-      if (action === 'transfer') {
-        if (g.budget || g.battle || context.owned(g).length < 2) {
-          context.notify('Transfers need two owned countries and a clear planning phase.');
-          return;
-        }
-        context.state.action = 'transfer';
-      }
-      if (action === 'planning') context.state.action = 'planning';
       if (action === 'confirm-transfer') {
         e.transfer(
           document.getElementById('transfer-from').value,
@@ -328,7 +355,7 @@ export function bindAppEvents(context) {
         context.state.action = 'battle';
       }
       if (action === 'roll') {
-        const result = e.roll();
+        const result = e.roll(context.tutorial?.diceRoll());
         if (result.conquered) context.notify('A new nation is under your command.');
       }
       if (action === 'stop-attack') {
@@ -341,6 +368,8 @@ export function bindAppEvents(context) {
         context.state.action = 'planning';
         context.state.allocations = {};
       }
+      context.tutorial?.afterAction(action);
+      if (context.tutorial?.step === 'bots') context.state.npcNote = g.events.at(-1).text;
       context.save();
       context.render();
       if (action === 'end-turn' || action === 'stop-attack') queueMicrotask(context.runNPCs);
@@ -352,6 +381,7 @@ export function bindAppEvents(context) {
 
   document.addEventListener('input', (event) => {
     const input = event.target;
+    if (context.multiplayer?.handleInput?.(input)) return;
     if (input.id === 'audio-music' || input.id === 'audio-effects') {
       context.audioDirector.setSettings({
         [input.id === 'audio-music' ? 'music' : 'effects']: Number(input.value) / 100,
@@ -376,6 +406,11 @@ export function bindAppEvents(context) {
   });
 
   document.addEventListener('change', (event) => {
+    if (event.target.id === 'diplomacy-target') {
+      context.state.diplomacyTarget = Number(event.target.value);
+      context.render();
+      return;
+    }
     if (event.target.id === 'ai-enabled') {
       const enabled = event.target.checked;
       context.cloud?.setCommentaryEnabled(enabled);
@@ -445,6 +480,16 @@ export function bindAppEvents(context) {
   });
 
   document.addEventListener('submit', async (event) => {
+    if (event.target.id === 'tutorial-room-form') {
+      event.preventDefault();
+      try {
+        context.tutorial?.joinPracticeRoom(new FormData(event.target).get('code'));
+        context.render();
+      } catch (error) {
+        document.getElementById('tutorial-room-error').textContent = error.message;
+      }
+      return;
+    }
     if (event.target.id === 'nickname-form') {
       event.preventDefault();
       await context.savePlayerNickname(event.target);
@@ -484,6 +529,7 @@ export function bindAppEvents(context) {
       try {
         await context.cloud.authenticate(kind, values);
         form.reset();
+        // Keep reset confirmation generic so the UI does not disclose registered addresses.
         if (kind === 'reset')
           context.notify('If this account exists, a password reset email has been requested.');
         else {
@@ -532,6 +578,7 @@ export function bindAppEvents(context) {
     context.notify(`Welcome, ${context.profile.name}. Your preview profile is ready.`);
   });
 
+  // Browsers require a user gesture before audio playback; startup alone cannot unlock it.
   document.addEventListener(
     'pointerdown',
     () => {

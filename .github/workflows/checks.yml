@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  # Verification reads source; it does not need repository writes or deployment permissions.
   contents: read
 
 concurrency:
@@ -31,6 +32,7 @@ jobs:
       - run: npm run test:browser
 
   security-rules:
+    # The demo-meridian emulator exercises permissions without touching real Firebase accounts.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

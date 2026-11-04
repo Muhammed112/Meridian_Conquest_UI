@@ -1,6 +1,7 @@
 // Operator-only helper. Firebase CLI credentials stay in memory, outside dist.
 import { createRequire } from 'node:module';
 import path from 'node:path';
+/** Load and validate the pinned CLI’s private credential adapter in operator scripts only. */
 export function firebaseCliAuth() {
   const require = createRequire(import.meta.url);
   const cliRoot = path.dirname(require.resolve('firebase-tools/package.json'));
@@ -15,6 +16,7 @@ export function firebaseCliAuth() {
   }
   return auth;
 }
+/** Refresh the signed-in operator’s access token in memory without printing or persisting it. */
 export async function firebaseAdminToken() {
   const cli = firebaseCliAuth();
   const account = cli.getGlobalDefaultAccount();

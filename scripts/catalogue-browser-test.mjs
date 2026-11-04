@@ -1,46 +1,14 @@
 import { chromium } from './lib/browser.mjs';
 // Local-only fixtures: country selection, markers and NPC reasoning in both speeds.
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-
-import path from 'node:path';
+import { startTestServer } from './lib/static-server.mjs';
 import { GameEngine } from '../dist/engine.js';
 import { catalogue } from '../dist/data.js';
 
-const root = path.resolve('dist');
 let browser;
-const server = createServer(async (req, res) => {
-  try {
-    const pathname = new URL(req.url, 'http://localhost').pathname,
-      file = path.resolve(
-        root,
-        '.' + decodeURIComponent(pathname === '/' ? '/index.html' : pathname),
-      );
-    if (!file.startsWith(root + path.sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    res
-      .writeHead(200, {
-        'Content-Type':
-          {
-            '.js': 'text/javascript',
-            '.html': 'text/html',
-            '.css': 'text/css',
-            '.svg': 'image/svg+xml',
-            '.mp3': 'audio/mpeg',
-            '.ogg': 'audio/ogg',
-          }[path.extname(file)] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-      })
-      .end(await readFile(file));
-  } catch {
-    res.writeHead(404).end();
-  }
-});
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const server = await startTestServer();
 const origin = 'http://localhost:' + server.address().port;
+/** Create a deterministic local fixture and collect uncaught browser errors. */
 async function pageFor(game) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }),
     errors = [];
@@ -58,6 +26,7 @@ try {
   browser = await chromium.launch({
     headless: true,
   });
+  // A tiny playable territory checks catalogue completeness and marker selection without an outline.
   for (const viewport of [
     { width: 1440, height: 1000 },
     { width: 390, height: 844 },
@@ -66,9 +35,25 @@ try {
     await page.setViewportSize(viewport);
     await page.goto(origin + '/#setup');
     assert.equal(await page.locator('.country-option').count(), catalogue.length);
+    // Flags must be real local images: native flag emoji can render as letters on Windows.
+    assert.equal(await page.locator('.country-option .country-flag').count(), catalogue.length);
+    assert.equal(await page.locator('.setup-roster-row .country-flag').count(), 10);
+    await page.locator('.roster-list').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('.setup-roster-row .country-flag')].every(
+        (image) =>
+          image.complete && image.naturalWidth > 0 && new URL(image.src).origin === location.origin,
+      ),
+    );
+    await page.screenshot({
+      path: `.firebase/setup-flags-${viewport.width}.png`,
+      fullPage: true,
+      animations: 'disabled',
+    });
     await page.locator('#country-search').fill('Vatican');
     assert.equal(await page.locator('.country-option').count(), 1);
     await page.locator('[data-action="setup-country"][data-code="VA"]').click();
+    await page.locator('[data-code="VA"] .country-flag').evaluate((image) => image.decode());
     assert.match(await page.locator('[data-code="VA"] .country-owner').innerText(), /506 people/);
     await page.locator('#session-name').fill('Vatican browser fixture');
     await page.locator('[data-action="create-game"]').click();
@@ -80,6 +65,30 @@ try {
     assert.equal(saved.countries.length, 10);
     assert.equal(saved.countries[0].value, 1);
     assert.equal(await page.locator('.country-row[data-code="VA"]').count(), 1);
+    // Every roster row must retain its ISO code beside a real flag, including tiny territories.
+    assert.equal(await page.locator('.country-row .country-flag').count(), 10);
+    assert.equal(
+      await page
+        .locator('.country-row')
+        .evaluateAll((rows) =>
+          rows.every(
+            (row) => row.querySelector('.country-identity').textContent.trim() === row.dataset.code,
+          ),
+        ),
+      true,
+    );
+    await page
+      .locator('.country-row[data-code="VA"] .country-flag')
+      .evaluate((image) => image.decode());
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      true,
+      'Flags and abbreviations must fit the existing roster layout.',
+    );
+    await page.locator('.roster-panel').screenshot({
+      path: `.firebase/roster-flags-${viewport.width}.png`,
+      animations: 'disabled',
+    });
     assert.equal(await page.locator('.map-marker[data-code="VA"]').count(), 1);
     assert.deepEqual(errors, []);
     console.log(
@@ -89,6 +98,86 @@ try {
     );
     await page.close();
   }
+  // Unequal ownership checks grouping and selection while keeping the original neutral rows.
+  {
+    const game = GameEngine.create('Grouped roster browser fixture', 'ZA', true);
+    const owners = [1, 0, 1, 2, 0, 1, 2, 0, 1, 1];
+    game.countries.forEach((country, index) => {
+      country.owner = owners[index];
+    });
+    game.position = game.order.indexOf(0);
+    game.turnStarted = false;
+    const { page, errors } = await pageFor(game);
+    await page.goto(origin + '/#game/' + game.id);
+    await page.locator('.game-heading').waitFor();
+    const rows = page.locator('.country-row');
+    assert.deepEqual(
+      await rows.evaluateAll((rows) => rows.map((row) => row.dataset.code)),
+      [0, 2, 5, 8, 9, 1, 4, 7, 3, 6].map((index) => game.countries[index].code),
+    );
+    // Each neutral outline must contain exactly one owner's countries, with a visible gap.
+    const groups = page.locator('.country-owner-group');
+    assert.deepEqual(
+      await groups.evaluateAll((groups) =>
+        groups.map((group) => group.querySelectorAll('.country-row').length),
+      ),
+      [5, 3, 2],
+    );
+    const outlines = await groups.evaluateAll((groups) =>
+      groups.map((group) => {
+        const style = getComputedStyle(group);
+        const rect = group.getBoundingClientRect();
+        return {
+          border: style.borderTopWidth,
+          colour: style.borderTopColor,
+          top: rect.top,
+          bottom: rect.bottom,
+        };
+      }),
+    );
+    assert.ok(outlines.every((outline) => outline.border === '1px'));
+    assert.ok(outlines.every((outline) => outline.colour === outlines[0].colour));
+    assert.ok(outlines[1].top > outlines[0].bottom);
+    const first = rows.first();
+    const background = await first.evaluate((row) => getComputedStyle(row).backgroundColor);
+    assert.equal(background, 'rgba(0, 0, 0, 0)');
+    assert.equal(
+      await rows.nth(4).evaluate((row) => getComputedStyle(row).backgroundColor),
+      background,
+      'Unselected rows retain their original neutral background.',
+    );
+    assert.equal(
+      await rows.last().evaluate((row) => getComputedStyle(row).backgroundColor),
+      background,
+      'Rows remain neutral regardless of their owner.',
+    );
+    await first.click();
+    assert.equal(await first.getAttribute('data-code'), game.countries[0].code);
+    assert.ok((await first.getAttribute('class')).includes('selected'));
+    assert.equal(
+      await page.locator('.selected-country h3').innerText(),
+      game.countries[0].flag + ' ' + game.countries[0].name,
+    );
+    const savedCodes = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0].countries.map(
+        (country) => country.code,
+      ),
+    );
+    assert.deepEqual(
+      savedCodes,
+      game.countries.map((country) => country.code),
+    );
+    await page.locator('.roster-panel').screenshot({
+      path: '.firebase/roster-grouped.png',
+      animations: 'disabled',
+    });
+    assert.deepEqual(errors, []);
+    console.log(
+      'PASS: owner groups rank by country count, retain neutral rows and stay selectable',
+    );
+    await page.close();
+  }
+  // Start at phase nineteen to verify the real twentieth-phase cap, not a randomly ended battle.
   for (const fast of [false, true]) {
     const game = GameEngine.create('NPC phase-limit fixture', 'ZA', true);
     Object.assign(game, {

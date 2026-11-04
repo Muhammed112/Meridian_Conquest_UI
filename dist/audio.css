@@ -1,3 +1,4 @@
+/* Settings share one entry point; playback and persisted preferences live in JavaScript. */
 .settings-trigger {
   display: inline-flex;
   align-items: center;
@@ -24,6 +25,7 @@
 .settings-section .audio-intro {
   margin-bottom: 12px;
 }
+/* The shared settings dialog scrolls internally so controls remain reachable on small screens. */
 .audio-dialog {
   width: min(440px, calc(100vw - 32px));
   max-height: 90dvh;
@@ -57,6 +59,7 @@
   color: var(--muted);
   margin: 0 0 20px;
 }
+/* Labels and live values share a row; the range input spans the full available width. */
 .audio-slider {
   display: grid;
   grid-template-columns: 1fr auto;

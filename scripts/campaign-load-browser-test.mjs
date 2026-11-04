@@ -4,9 +4,9 @@ import { chromium } from './lib/browser.mjs';
 // Firebase administrator credentials and campaign data remain in memory.
 import assert from 'node:assert/strict';
 
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import { startTestServer } from './lib/static-server.mjs';
+import { installCampaignFixture } from './lib/campaign-fixture.mjs';
+import { committedHistory } from '../dist/campaign-history.js';
 
 const cli = firebaseCliAuth();
 const account = cli.getGlobalDefaultAccount(),
@@ -24,6 +24,7 @@ assert.match(
 const base =
   'https://firestore.googleapis.com/v1/projects/meridian-conquest-m112/databases/(default)/documents/' +
   gamePath;
+/** Read the explicitly selected private test campaign; no administrator writes are made. */
 async function read(url, body) {
   const res = await fetch(url, {
     method: body ? 'POST' : 'GET',
@@ -34,6 +35,7 @@ async function read(url, body) {
   assert.ok(res.ok, data.error?.message);
   return data;
 }
+// Fetch only the explicitly selected campaign; subsequent rendering uses a local copy of these facts.
 const [document, history] = await Promise.all([
   read(base),
   read(base + ':runQuery', {
@@ -44,39 +46,25 @@ const [document, history] = await Promise.all([
   }),
 ]);
 const game = JSON.parse(document.fields.payload.stringValue);
-game.events = history
+const records = history
   .filter((row) => row.document)
-  .map((row) => JSON.parse(row.document.fields.payload.stringValue));
-const root = path.resolve('dist');
+  .map(({ document }) => {
+    const fields = document.fields;
+    return {
+      event: JSON.parse(fields.payload.stringValue),
+      sequence: Number(fields.sequence.integerValue),
+      ...(fields.previousEventId
+        ? { previousEventId: fields.previousEventId.stringValue || null }
+        : {}),
+    };
+  });
+// Staged or abandoned event branches are not part of the board's committed replay.
+game.events = committedHistory(
+  records,
+  document.fields.historyHead ? document.fields.historyHead.stringValue || null : undefined,
+).map((record) => record.event);
 let browser;
-const server = createServer(async (req, res) => {
-  try {
-    const file = path.resolve(
-      root,
-      '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname),
-    );
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    const target = file === root ? path.join(root, 'index.html') : file;
-    res.writeHead(200, {
-      'Content-Type':
-        {
-          '.js': 'text/javascript',
-          '.css': 'text/css',
-          '.html': 'text/html',
-          '.svg': 'image/svg+xml',
-          '.mp3': 'audio/mpeg',
-          '.ogg': 'audio/ogg',
-        }[path.extname(target)] || 'application/octet-stream',
-    });
-    res.end(await readFile(target));
-  } catch {
-    res.writeHead(404).end();
-  }
-});
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const server = await startTestServer();
 try {
   browser = await chromium.launch({
     headless: true,
@@ -107,81 +95,42 @@ try {
     `PASS: existing saved campaign renders its card, board and reload with ${game.events.length} events`,
   );
   await page.close();
+  // Replay the same saved data through the real lazy-loading store with a fake SDK, never live writes.
   const cloudPage = await browser.newPage({
     ignoreHTTPSErrors: true,
     viewport: { width: 1440, height: 1000 },
   });
   cloudPage.on('pageerror', (error) => errors.push(error.message));
-  const source = await readFile(path.join(root, 'cloud.js'), 'utf8');
-  const { events, ...board } = game;
-  const fixture = `
- import {connectCloud as realConnect} from './cloud-under-test.js';
- export const cloudEnabled=true;
- const board=${JSON.stringify(board)},events=${JSON.stringify(events)},db={};
- const ref=(...parts)=>({path:parts.filter(p=>p!==db).map(p=>p.path||p).join('/')});
- window.campaignHistoryMode=sessionStorage.getItem('campaign-history-mode')||'hold';window.campaignWrites=0;
- const user={uid:'campaign-loading-check',email:'campaign-owner@example.invalid',displayName:'Commander'};
- const sdk={initializeApp:()=>({}),getAuth:()=>({}),getFirestore:()=>db,browserSessionPersistence:{},setPersistence:async()=>{},
- onAuthStateChanged:(_,callback)=>{queueMicrotask(()=>callback(user));},doc:ref,collection:ref,query:r=>r,orderBy:()=>({}),
- getDocs:async target=>{
-  if(target.path.endsWith('/games'))return {docs:[{ref:ref(db,'users',user.uid,'games',board.id),data:()=>({payload:JSON.stringify(board)})}]};
-  while(window.campaignHistoryMode==='hold')await new Promise(resolve=>setTimeout(resolve,25));
-  if(window.campaignHistoryMode==='fail')throw Object.assign(new Error('Temporary connection failure'),{code:'unavailable'});
-  return {docs:events.map(event=>({data:()=>({payload:JSON.stringify(event)})}))};
- },onSnapshot:()=>()=>{},writeBatch:()=>({set(){},async commit(){window.campaignWrites++;}})};
- export function connectCloud(options){return realConnect({...options,aiSettings:{enabled:false},loadSDK:async()=>sdk});}
- `;
-  await cloudPage.route('**/cloud.js*', (route) =>
-    route.fulfill({ contentType: 'text/javascript', body: fixture }),
-  );
-  await cloudPage.route('**/cloud-under-test.js', (route) =>
-    route.fulfill({ contentType: 'text/javascript', body: source }),
-  );
+  await installCampaignFixture(cloudPage, [game]);
   await cloudPage.goto(origin + '/#campaigns');
   await cloudPage.locator('.campaign-card').waitFor();
-  assert.match(await cloudPage.locator('#app').innerText(), /Loading your saved campaigns/);
-  assert.equal(await cloudPage.getByText('No campaigns in sight.', { exact: true }).count(), 0);
+  assert.equal(await cloudPage.evaluate(() => window.historyReads.length), 0);
+  await cloudPage.evaluate((id) => {
+    window.historyModes[id] = 'hold';
+  }, game.id);
+  // A replay exercises lazy loading without advancing any turns in the fixture.
+  await cloudPage.locator(`a[href="#history/${game.id}"]`).click();
+  await cloudPage.locator('section[role="status"]').waitFor();
   assert.equal(await cloudPage.evaluate(() => window.campaignWrites), 0);
-  await cloudPage.evaluate(() => {
-    window.campaignHistoryMode = 'fail';
-  });
-  await cloudPage.getByRole('button', { name: 'Retry loading' }).waitFor();
-  assert.equal(await cloudPage.locator('.campaign-card').count(), 1);
+  await cloudPage.evaluate((id) => {
+    window.historyModes[id] = 'fail';
+  }, game.id);
+  await cloudPage.locator('[data-action="retry-campaign-history"]').waitFor();
   assert.equal(await cloudPage.evaluate(() => window.campaignWrites), 0);
-  console.log(
-    'PASS: slow/failed cloud history keeps the campaign visible, shows the actual load state and makes no save writes',
-  );
-  await cloudPage.evaluate(() => {
-    window.campaignHistoryMode = 'pass';
-  });
-  await cloudPage.getByRole('button', { name: 'Retry loading' }).click();
-  await cloudPage.waitForFunction(
-    (count) =>
-      JSON.parse(localStorage.getItem('meridian-cloud-cache-campaign-loading-check'))?.[0]?.events
-        .length === count,
-    events.length,
-  );
-  await cloudPage.locator(`a[href="#game/${game.id}"]`).click();
-  await cloudPage.locator('.game-heading').waitFor();
-  await cloudPage.evaluate(() => sessionStorage.setItem('campaign-history-mode', 'hold'));
+  await cloudPage.evaluate((id) => {
+    window.historyModes[id] = 'ready';
+  }, game.id);
+  await cloudPage.locator('[data-action="retry-campaign-history"]').click();
+  const cachedCount = () =>
+    JSON.parse(localStorage.getItem('meridian-cloud-cache-quality-review'))?.[0]?.events.length;
+  await cloudPage.waitForFunction(cachedCount);
+  assert.equal(await cloudPage.evaluate(cachedCount), game.events.length);
   await cloudPage.reload();
-  await cloudPage.locator('.campaign-card').waitFor();
-  assert.equal(
-    await cloudPage.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem('meridian-cloud-cache-campaign-loading-check'))[0].events
-          .length,
-    ),
-    game.events.length,
-  );
-  assert.equal(await cloudPage.evaluate(() => window.campaignWrites), 0);
-  await cloudPage.evaluate(() => {
-    window.campaignHistoryMode = 'pass';
-  });
-  await cloudPage.locator('.game-heading').waitFor();
+  await cloudPage.waitForFunction(cachedCount);
+  assert.equal(await cloudPage.evaluate(cachedCount), game.events.length);
   assert.deepEqual(errors, []);
   console.log(
-    'PASS: retry restores complete history and reload preserves the account recovery cache',
+    'PASS: selected history loads on demand, retries failures and retains complete recovery data',
   );
 } finally {
   await browser?.close();

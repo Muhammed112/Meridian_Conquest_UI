@@ -1,0 +1,4 @@
+# Upload only the browser app and its static hosting configuration.
+/*
+!/dist
+!/vercel.json

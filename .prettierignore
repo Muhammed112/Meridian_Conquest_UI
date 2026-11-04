@@ -1,10 +1,13 @@
+# Dependencies, private operator state and lockfiles are maintained by their own tools.
 node_modules/
 .firebase/
 package-lock.json
 functions/package-lock.json
+# Preserve generated datasets and third-party assets; edit their generators or source inputs.
 dist/assets/
 dist/country-catalogue.js
 dist/legacy-countries.js
 dist/population-snapshot.js
+# Rules use deliberate fixed-size expressions to fit Firestore's evaluation budget.
 firestore.rules
 *.log

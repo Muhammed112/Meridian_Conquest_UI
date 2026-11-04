@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { firebaseCliAuth } from './firebase-admin-access.mjs';
 
+/**
+ * Restore or register a private loopback debug token; missing CLI credentials never block
+ * gameplay.
+ */
 export async function localAppCheck({
   config,
   cache,
@@ -31,6 +35,7 @@ export async function localAppCheck({
         'https://www.googleapis.com/auth/cloud-platform',
       ])
     ).access_token;
+    /** Read/register only App Check debug records using the operator's in-memory credential. */
     async function request(name, body) {
       const response = await fetch('https://firebaseappcheck.googleapis.com/v1/' + name, {
         method: body ? 'POST' : 'GET',
@@ -42,6 +47,7 @@ export async function localAppCheck({
         throw Object.assign(new Error('App Check setup failed'), { status: response.status });
       return response.json();
     }
+    // Check that a cached token still exists remotely; a revoked token should be replaced locally.
     if (saved) {
       try {
         await request(saved.name);
@@ -62,7 +68,8 @@ export async function localAppCheck({
     return debug;
   } catch {
     warn(
-      'Local AI setup is unavailable. Gameplay and saves remain available. Sign in with npx firebase login to enable local commentary.',
+      'Local AI setup is unavailable. Gameplay and saves remain available. Sign in' +
+        ' with npx firebase login to enable local commentary.',
     );
     return saved;
   }

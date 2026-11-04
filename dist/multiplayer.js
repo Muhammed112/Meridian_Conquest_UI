@@ -1,23 +1,25 @@
 import { escapeHTML } from './html.js';
-import { catalogue, colours } from './data.js';
+import { catalogue, colours, findCountry } from './data.js';
 import { applyCommentary } from './commentary.js?v=match-commentary-20261026-1';
 import { normalizeRoomCode, readRoomGame } from './rooms.js';
 import { playerNickname } from './profile.js';
-import { renderReports, updateReportsCommentary } from './ui/reports.js';
+import { updateReportsCommentary } from './ui/reports.js';
+import { openingLeaders, validateRoomSetup } from './room-setup.js';
+import { applyBoardChoice } from './controllers/board-actions.js';
+import { NPC_DECISION_DELAY } from './motion.js?v=battle-reveal-20261026-1';
 
+/** Own lobby/board interaction and host bot scheduling without changing the shared game rules. */
 export function createMultiplayerUI({
   getCloud,
   notify,
   changed,
-  mapView,
-  diceView,
+  renderGame,
+  dieView,
+  getState,
   presentGame = (game) => game,
   isRolling = () => false,
-  getReportTab = () => 'field',
-  getReportDock = () => ({}),
 }) {
-  const button = (label, action, disabled = false) =>
-    /* HTML */ `<button
+  const button = (label, action, disabled = false) => /* HTML */ `<button
       type="button"
       class="btn btn-sm"
       data-room-action="${action}"
@@ -32,10 +34,8 @@ export function createMultiplayerUI({
     attempt = '',
     timer = null,
     active = false,
-    selected = '',
-    from = '',
-    to = '',
-    uid = null;
+    uid = null,
+    countryQuery = null;
   const account = () => getCloud()?.user;
   const service = () => {
     const cloud = getCloud();
@@ -45,6 +45,7 @@ export function createMultiplayerUI({
   };
   let parsedRoom = null,
     parsedGame = null;
+  // Parse once per room snapshot, then attach separately arriving shared narration by event ID.
   const game = () => {
     if (!room?.payload) return null;
     if (parsedRoom !== room) {
@@ -57,10 +58,12 @@ export function createMultiplayerUI({
   };
   const seat = () => room?.memberIds.indexOf(account()?.uid) ?? -1;
   const reports = new Map();
+  /** Only the host requests shared narration; friends receive the saved reports. */
   function requestCommentary() {
     if (!active || room?.hostUid !== account()?.uid || !game()) return 0;
     return getCloud().requestCommentary(game(), { roomCode: code });
   }
+  /** Release listeners, bot timers and parsed state before leaving a room or changing accounts. */
   function disconnect() {
     reports.clear();
     parsedRoom = null;
@@ -71,7 +74,12 @@ export function createMultiplayerUI({
     timer = null;
     room = null;
     attempt = '';
+    countryQuery = null;
   }
+  /**
+   * Let the host advance bot turns after the reading pause; friends never run a second bot
+   * loop.
+   */
   function schedule() {
     clearTimeout(timer);
     timer = null;
@@ -82,9 +90,14 @@ export function createMultiplayerUI({
       room.hostUid === account()?.uid &&
       room.currentSeat >= room.memberIds.length
     ) {
-      timer = setTimeout(() => act('bot'), 2400);
+      const decision = game()?.events.at(-1);
+      timer = setTimeout(
+        () => act('bot'),
+        decision?.type === 'decision' ? NPC_DECISION_DELAY : 2400,
+      );
     }
   }
+  /** Join once per account/room and ignore delayed updates from a previous connection. */
   async function connect() {
     const user = account();
     if (uid !== user?.uid) {
@@ -104,8 +117,23 @@ export function createMultiplayerUI({
         (value) => {
           if (!active || code !== requested || account()?.uid !== user.uid) return;
           try {
+            if (value) validateRoomSetup(value);
             if (value?.payload) readRoomGame(value);
             room = value;
+            const state = getState();
+            const current = game();
+            if (current && room.hostUid === account()?.uid) void getCloud().prepareCommentary?.();
+            // Draft allocations belong to one revision and must not survive another player's move.
+            if (current && state.roomRevision !== room.revision) {
+              state.allocations = {};
+              // Keep the offer result open when this player's diplomacy commit arrives.
+              state.action = current.battle
+                ? 'battle'
+                : state.action === 'diplomacy' && room.currentSeat === seat()
+                  ? 'diplomacy'
+                  : 'planning';
+              state.roomRevision = room.revision;
+            }
             error = value ? '' : 'This room no longer exists.';
             changed();
             schedule();
@@ -144,6 +172,10 @@ export function createMultiplayerUI({
       changed();
     }
   }
+  /**
+   * Reset room controls only when the room route changes, preserving an active connection
+   * otherwise.
+   */
   function route(next) {
     const nextActive = next !== null,
       nextCode = next || '';
@@ -151,14 +183,12 @@ export function createMultiplayerUI({
       disconnect();
       error = '';
       busy = false;
-      selected = '';
-      from = '';
-      to = '';
     }
     active = nextActive;
     code = nextCode;
     if (active) connect();
   }
+  /** Serialize room actions and block gameplay controls until the current dice reveal completes. */
   async function act(action, values = {}) {
     if (
       busy ||
@@ -177,6 +207,13 @@ export function createMultiplayerUI({
             : 'Recent events already have commentary.',
         );
       } else if (action === 'start') await service().start(code);
+      else if (['country', 'prepare', 'opening-roll', 'reroll'].includes(action))
+        await service().setup(
+          code,
+          action === 'opening-roll' ? 'roll' : action,
+          values.country,
+          room.initiative?.round,
+        );
       else if (action === 'leave') {
         await service().leave(code);
         location.hash = 'multiplayer';
@@ -206,6 +243,7 @@ export function createMultiplayerUI({
       }
     }
   }
+  /** Convert lobby and move forms to validated service operations with shared busy/error state. */
   async function submit(form) {
     if (busy) return;
     const values = new FormData(form),
@@ -231,108 +269,89 @@ export function createMultiplayerUI({
       }
       return;
     }
-    if (kind === 'reinforce') {
-      const allocations = Object.fromEntries(
-        [...values].map(([key, value]) => [key, Number(value)]),
-      );
-      await act('reinforce', { allocations });
+    if (kind === 'country') {
+      const input = form.elements.country;
+      const query = input.value.trim();
+      const country =
+        catalogue.find((item) => item.code === query.toUpperCase()) ||
+        catalogue.find((item) => item.name.toLowerCase() === query.toLowerCase());
+      if (!country || isCountryTaken(country.code)) {
+        input.setCustomValidity(
+          country
+            ? 'That country is already chosen by a friend.'
+            : 'Choose a country from the suggestions.',
+        );
+        input.reportValidity();
+        return;
+      }
+      countryQuery = country.name;
+      await act('country', { country: country.code });
       return;
     }
-    await act(kind, {
-      from: values.get('from'),
-      to: values.get('to'),
-      amount: Number(values.get('amount')),
-    });
   }
-  const options = (countries, value) =>
-    countries
+  /** Keep another member's reservation out of both suggestions and local confirmation. */
+  function isCountryTaken(countryCode) {
+    return Object.entries(room.countryChoices || {}).some(
+      ([id, chosen]) => id !== account().uid && chosen === countryCode,
+    );
+  }
+
+  /** Let the browser filter available suggestions inside the single country field. */
+  function countryOptions() {
+    return catalogue
+      .filter((country) => !isCountryTaken(country.code))
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map(
-        (c) =>
-          /* HTML */ `<option value="${c.code}" ${c.code === value ? 'selected' : ''}
-            >${escapeHTML(c.name)} (${c.army})</option
-          >`,
+        (country) =>
+          `<option value="${escapeHTML(country.name)}" label="${country.code}"></option>`,
       )
       .join('');
-  function controls(g) {
-    const local = seat(),
-      own = g.countries.filter((c) => c.owner === local),
-      isTurn = room.currentSeat === local;
-    if (g.presentationPending)
-      return '<h2>Rolling dice...</h2><p class="muted" role="status">Results appear when the dice settle.</p>';
-    if (g.winner !== null)
-      return /* HTML */ `<h2>${escapeHTML(g.playerNames[g.winner])} wins.</h2
-        ><p class="muted">All ten countries are under one command.</p>`;
-    if (!own.length)
-      return '<h2>You have been eliminated.</h2><p class="muted">You can keep watching the match.</p>';
-    if (!isTurn)
-      return /* HTML */ `<h2>${escapeHTML(g.playerNames[room.currentSeat])}'s turn.</h2
-        ><p class="muted">The board updates as each move happens.</p
-        >${room.currentSeat >= room.memberIds.length ? '<p class="small muted">The host runs the bots. Their room must stay open.</p>' : ''}`;
-    if (g.budget)
-      return /* HTML */ `<h2>Deploy ${g.budget} soldiers.</h2
-        ><p class="small muted">Allocate the full budget before moving.</p
-        ><form data-room-form="reinforce"
-          >${own.map((c) => /* HTML */ `<label class="room-allocation">${escapeHTML(c.name)}<input class="field" type="number" min="0" max="${g.budget}" name="${c.code}" value="${c.code === (own.some((c) => c.code === from) ? from : own[0].code) ? g.budget : 0}" required /></label>`).join('')}<button
-            class="btn btn-primary btn-full"
-            ${busy ? 'disabled' : ''}
-            >Deploy reinforcements</button
-          ></form
-        >`;
-    if (g.battle)
-      return /* HTML */ `<h2>Battle in progress.</h2
-        ><p class="muted"
-          >${escapeHTML(catalogue.find((c) => c.code === g.battle.from)?.name)} attacks
-          ${escapeHTML(catalogue.find((c) => c.code === g.battle.to)?.name)}.</p
-        ><div class="room-buttons"
-          >${button('Roll dice', 'roll', busy)}${button('Retreat & end turn', 'retreat', busy)}</div
-        >`;
-    const attackFrom = own.filter((c) => c.army >= 2),
-      enemies = g.countries.filter((c) => c.owner !== local);
-    if (!own.some((c) => c.code === from)) from = own[0]?.code || '';
-    if (!enemies.some((c) => c.code === to)) to = enemies[0]?.code || '';
-    return /* HTML */ `<h2>Your move.</h2>${
-        !g.attackUsed && attackFrom.length
-          ? /* HTML */ `<form data-room-form="attack" class="room-action-form"
-              ><h3>Launch an attack</h3
-              ><label
-                >From<select class="field" name="from"
-                  >${options(attackFrom, from)}</select
-                ></label
-              ><label
-                >Target<select class="field" name="to"
-                  >${options(enemies, to)}</select
-                ></label
-              ><button class="btn btn-primary" ${busy ? 'disabled' : ''}>Attack</button></form
-            >`
-          : '<p class="muted">End your turn when you are ready.</p>'
-      }${
-        own.length > 1
-          ? /* HTML */ `<details class="room-transfer"
-              ><summary>Transfer soldiers</summary
-              ><form data-room-form="transfer" class="room-action-form"
-                ><label
-                  >From<select class="field" name="from"
-                    >${options(own, from)}</select
-                  ></label
-                ><label
-                  >To<select class="field" name="to"
-                    >${options(own, own.find((c) => c.code !== from)?.code)}</select
-                  ></label
-                ><label
-                  >Soldiers<input
-                    class="field"
-                    type="number"
-                    name="amount"
-                    min="1"
-                    max="100000"
-                    value="1"
-                    required /></label
-                ><button class="btn" ${busy ? 'disabled' : ''}>Transfer</button></form
-              ></details
-            >`
-          : ''
-      }<div class="room-buttons">${button('End turn', 'end', busy)}</div>`;
   }
+
+  /** Display searchable reservations while keeping country confirmation explicit. */
+  function countryPicker() {
+    const selected = findCountry(room.countryChoices?.[account().uid]);
+    return `<form data-room-form="country" class="room-action-form">
+      <label for="room-starting-country">Your starting country<input
+        id="room-starting-country" class="field" name="country" type="search"
+        list="room-country-options" autocomplete="off" placeholder="Search or choose a country"
+        value="${escapeHTML(countryQuery ?? selected?.name ?? '')}" required /></label>
+      <datalist id="room-country-options">${countryOptions()}</datalist>
+      <button type="submit" class="btn btn-primary" ${busy ? 'disabled' : ''}>Confirm country</button></form>`;
+  }
+
+  /** Show synchronized opening dice and keep tie breaks separate from combat dice. */
+  function openingView() {
+    const setup = room.initiative;
+    const leaders = openingLeaders(setup);
+    const names = (id) => room.members[id]?.name || `Bot ${setup.players.indexOf(id) + 1}`;
+    const canRoll = setup.contenders.includes(account().uid) && !setup.rolls[account().uid];
+    return `<section class="panel room-opening"><div class="panel-body">
+      <div class="eyebrow">Opening dice / Round ${setup.round}</div><h2>Roll for the first turn.</h2>
+      <p class="muted">Highest roll starts. Tied leaders reroll; remaining turns follow lobby seat order.</p>
+      <div class="room-opening-grid">${setup.players
+        .map((id, seat) => {
+          const country = findCountry(setup.countries[seat]);
+          const face = setup.rolls[id];
+          return `<div class="room-seat ${setup.winner === id ? 'opening-winner' : ''}">
+          <div><strong>${escapeHTML(names(id))}${id === account().uid ? ' (you)' : ''}</strong>
+          <span>${escapeHTML(country.name)}${!setup.contenders.includes(id) ? ' / Out of tie-break' : ''}</span></div>
+          ${face ? dieView(face) : '<span class="badge">Waiting to roll</span>'}</div>`;
+        })
+        .join('')}</div>
+      ${canRoll ? button('Roll my die', 'opening-roll', busy) : ''}
+      ${
+        setup.winner
+          ? `<p role="status">${escapeHTML(names(setup.winner))} goes first.</p>`
+          : leaders.length > 1
+            ? '<p role="status">The highest roll is tied. Only tied leaders roll again.</p>'
+            : '<p role="status">Waiting for the remaining players to roll.</p>'
+      }
+      ${room.hostUid === account().uid && leaders.length > 1 ? button('Begin tie-break', 'reroll', busy) : ''}
+      ${room.hostUid === account().uid && setup.winner ? button('Start match', 'start', busy) : ''}
+      </div></section>`;
+  }
+  /** Render lobby, opening rolls or the same board view used by single-player campaigns. */
   function render() {
     const user = account(),
       g = game() ? presentGame(game()) : null;
@@ -425,136 +444,96 @@ export function createMultiplayerUI({
           ${button('Retry', 'retry', busy)} <a href="#multiplayer">Back to rooms</a></div
         >`
       );
-    const codeHeader = /* HTML */ `<div class="room-code-bar"
+    const codeHeader = /* prettier-ignore */ `<div class="room-code-bar"
       ><div><span class="caption">Room code</span><strong>${escapeHTML(code)}</strong></div
       >${button('Copy code', 'copy', busy)}<span class="badge live"
         >${room.memberIds.length} friends / ${10 - room.memberIds.length} bots</span
-      >${room.status === 'lobby' ? button(room.hostUid === user.uid ? 'Close room' : 'Leave lobby', 'leave', busy) : '<a href="#multiplayer" class="btn btn-sm">Back to rooms</a>'}</div
+      >${
+        room.status === 'lobby'
+            ? button(room.hostUid === user.uid ? 'Close room' : 'Leave lobby', 'leave', busy)
+            : '<a href="#multiplayer" class="btn btn-sm">Back to rooms</a>'
+      }</div
     >`;
     if (room.status === 'closed')
       return (
         heading +
         codeHeader +
         message +
-        '<div class="notice">The host closed this room. <a href="#multiplayer">Create or join another room.</a></div>'
+        ('<div class="notice">The host closed this room. <a' +
+          ' href="#multiplayer">Create or join another room.</a></div>')
       );
+    if (room.status === 'rolling') return heading + codeHeader + message + openingView();
     if (room.status === 'lobby')
       return (
         heading +
         codeHeader +
         message +
-        /* HTML */ `<div class="room-lobby-grid"
+        /* prettier-ignore */ `<div class="room-lobby-grid"
           ><section class="panel"
             ><div class="panel-body"
               ><h2>Gather your commanders.</h2
               ><p class="muted"
-                >${room.memberIds.length} of 10 seats filled. Countries are assigned when the match
-                begins.</p
+                >${room.memberIds.length} of 10 seats filled. Choose your country before the opening rolls.</p
               ><div class="room-seats"
-                >${Array.from({ length: 10 }, (_, i) => {
-                  const id = room.memberIds[i];
-                  return /* HTML */ `<div class="room-seat ${id ? '' : 'room-bot'}"
+                >${
+                  Array.from({ length: 10 }, (_, i) => {
+                    const id = room.memberIds[i];
+                    return /* prettier-ignore */ `<div class="room-seat ${id ? '' : 'room-bot'}"
                     ><span class="room-seat-number" style="color:${colours[i]}"
                       >${String(i + 1).padStart(2, '0')}</span
                     ><div
                       ><strong>${id ? escapeHTML(room.members[id].name) : 'Bot seat'}</strong
                       ><span
-                        >${id === room.hostUid ? 'Host' : id ? 'Ready to play' : 'A friend can take this seat before the start'}</span
+                        >${
+                                            id === room.hostUid
+                                                ? 'Host'
+                                                : id
+                                                  ? escapeHTML(catalogue.find((c) => c.code ===
+                                                    room.countryChoices?.[id])?.name || 'Choose a country')
+                                                  : 'A friend can take this seat before the start'
+                                          }</span
                       ></div
                     ><span class="badge">${id ? 'Human' : 'Bot'}</span></div
                   >`;
-                }).join('')}</div
+                  }).join('')
+                }</div
               ></div
             ></section
           ><section class="panel"
             ><div class="panel-body"
               ><div class="eyebrow">Your shared campaign</div><h2>${escapeHTML(room.name)}</h2
-              ><p>${escapeHTML(room.difficulty)} bots / ten countries / one winner</p
+              >${countryPicker()}<p>${escapeHTML(room.difficulty)} bots / ten countries / one winner</p
               ><p class="muted"
                 >Once everyone has joined, the host starts the match. Empty seats become bots. New
                 players cannot join after the start.</p
               ><p class="small muted"
                 >Keep the host's room open to run bot turns. Rejoin with this code after signing
                 back in to recover your seat.</p
-              >${room.hostUid === user.uid ? /* HTML */ `<button class="btn btn-primary btn-full" data-room-action="start" ${busy ? 'disabled' : ''}>Start with ${10 - room.memberIds.length} bots</button>` : '<div class="notice" role="status">Waiting for the host to start.</div>'}</div
+              >${
+                room.hostUid === user.uid
+                    ? /* prettier-ignore */ `<button class="btn btn-primary btn-full" data-room-action="prepare" ${
+                                busy || room.memberIds.some((id) => !room.countryChoices?.[id]) ? 'disabled' : ''
+                              }>Roll for first turn / ${10 - room.memberIds.length} bots</button>`
+                    : '<div class="notice" role="status">Waiting for the host to start.</div>'
+              }</div
             ></section
           ></div
         >`
       );
     if (!g) return heading + message;
-    const local = seat(),
-      latest = g.battle?.pairs?.length ? g.battle : g.lastBattle;
-    return (
-      /* HTML */ `<div class="page-heading"><div><div class="eyebrow">Live multiplayer / Round ${g.round}</div><h1>${escapeHTML(room.name)}</h1><p>${g.winner !== null ? escapeHTML(g.playerNames[g.winner]) + ' won the match' : local === room.currentSeat ? 'Your turn' : escapeHTML(g.playerNames[room.currentSeat]) + ' is playing'}</p></div></div>` +
-      codeHeader +
-      message +
-      /* HTML */ `<div class="room-turns"
-          >${g.order.map((p) => /* HTML */ `<span class="badge ${p === room.currentSeat ? 'gold' : ''}" style="border-left:3px solid ${colours[p]}">${escapeHTML(g.playerNames[p])}${p === local ? ' (you)' : ''}</span>`).join('')}</div
-        ><div class="room-board-grid"
-          ><div
-            >${mapView(g.countries, { live: true, selected, origin: g.battle?.from, target: g.battle?.to, playerNames: g.playerNames })}<section
-              class="panel room-country-panel"
-              ><div class="activity-head"
-                ><h3>Countries & armies</h3
-                ><span class="badge">You: ${escapeHTML(g.playerNames[local])}</span></div
-              ><div class="room-countries"
-                >${g.countries
-                  .map(
-                    (c) =>
-                      /* HTML */ `<button
-                        type="button"
-                        class="room-country ${c.code === selected ? 'selected' : ''}"
-                        data-room-country="${c.code}"
-                        style="--owner-colour:${colours[c.owner]}"
-                        ><span>${c.flag}</span
-                        ><span
-                          ><strong>${escapeHTML(c.name)}</strong
-                          ><small
-                            >${escapeHTML(g.playerNames[c.owner])}${c.owner === local ? ' (you)' : ''}</small
-                          ></span
-                        ><b>${c.army}</b></button
-                      >`,
-                  )
-                  .join('')}</div
-              ></section
-            >${renderReports(g, {
-              tab: getReportTab(),
-              dock: getReportDock(),
-              badge: '<span class="badge live">Live</span>',
-              live: true,
-              limit: 16,
-              commentaryAction:
-                room.hostUid === user.uid ? button('Generate commentary', 'commentary') : '',
-              fieldReports: g.events
-                .slice(-16)
-                .reverse()
-                .map(
-                  (event) =>
-                    /* HTML */ `<div class="activity-row"
-                      ><span class="badge">R${event.round}</span
-                      ><div class="activity-copy"
-                        >${escapeHTML(event.text)}<span class="event-meta"
-                          >${escapeHTML(event.type.toUpperCase())}</span
-                        ></div
-                      ></div
-                    >`,
-                )
-                .join(''),
-            })}</div
-          ><aside class="panel room-control-panel"
-            ><div class="panel-body"
-              >${controls(g)}${latest?.pairs?.length ? /* HTML */ `<div class="room-dice"><h3>Latest dice</h3>${diceView(latest.pairs)}</div>` : ''}<div
-                class="room-selection"
-                >${selected ? `Selected: ${escapeHTML(g.countries.find((c) => c.code === selected)?.name)}` : ''}</div
-              ></div
-            ></aside
-          ></div
-        >`
-    );
+    return renderGame(g, codeHeader + message);
   }
+
   return {
     render,
     route,
+    /** Preserve typed text across lobby updates; native suggestions need no separate search state. */
+    handleInput(input) {
+      if (!active || room?.status !== 'lobby' || input.id !== 'room-starting-country') return false;
+      countryQuery = input.value;
+      input.setCustomValidity('');
+      return true;
+    },
     requestCommentary,
     sessionChanged: connect,
     get game() {
@@ -566,14 +545,76 @@ export function createMultiplayerUI({
     get playerSeat() {
       return seat();
     },
+    get isHost() {
+      return room?.hostUid === account()?.uid;
+    },
+    isHuman(player) {
+      return player < (room?.memberIds.length || 0);
+    },
+    get decision() {
+      const event = game()?.events.at(-1);
+      return event?.type === 'decision' ? event.text : '';
+    },
     async handleClick(event) {
-      const country = event.target.closest('[data-room-country]');
-      if (country) {
-        selected = country.dataset.roomCountry;
-        const c = game()?.countries.find((c) => c.code === selected);
-        if (c?.owner === seat()) from = c.code;
-        else to = c?.code || '';
-        changed();
+      if (!active) return false;
+      const shared = event.target.closest('[data-action]');
+      const action = shared?.dataset.action;
+      const board = game();
+      const actions = [
+        'select-country',
+        'allocate-plus',
+        'allocate-minus',
+        'auto-allocate',
+        'transfer',
+        'planning',
+        'diplomacy',
+        'propose-alliance',
+        'confirm-reinforce',
+        'confirm-transfer',
+        'start-attack',
+        'roll',
+        'stop-attack',
+        'end-turn',
+        'request-commentary',
+      ];
+      if (board && actions.includes(action)) {
+        if (shared.disabled || busy) return true;
+        if (action === 'request-commentary') {
+          await act('commentary');
+          return true;
+        }
+        const state = getState();
+        // Local selection is harmless between turns; committed moves require this player's seat.
+        if (
+          action !== 'select-country' &&
+          (room.currentSeat !== seat() || board.winner !== null || isRolling())
+        )
+          return true;
+        try {
+          if (applyBoardChoice(board, state, seat(), action, shared.dataset.code)) changed();
+          else {
+            const value = (id) => document.getElementById(id)?.value;
+            const moves = {
+              'confirm-reinforce': ['reinforce', { allocations: { ...state.allocations } }],
+              'confirm-transfer': [
+                'transfer',
+                {
+                  from: value('transfer-from'),
+                  to: value('transfer-to'),
+                  amount: Number(value('transfer-count')),
+                },
+              ],
+              'start-attack': ['attack', { from: value('attack-from'), to: value('attack-to') }],
+              'propose-alliance': ['alliance', { target: Number(value('diplomacy-target')) }],
+              roll: ['roll'],
+              'stop-attack': ['retreat'],
+              'end-turn': ['end'],
+            };
+            if (moves[action]) await act(...moves[action]);
+          }
+        } catch (failure) {
+          notify(failure.message);
+        }
         return true;
       }
       const node = event.target.closest('[data-room-action]');

@@ -1,4 +1,5 @@
 import { findCountry, savedCountryPopulation } from './data.js';
+import { isDiplomacyFact, isDiplomacyState } from './diplomacy.js';
 
 export const RECORD_VERSION = 2;
 export const EVENT_TYPES = Object.freeze([
@@ -93,6 +94,7 @@ export function validateGameBoard(game) {
   return { ...game, countries };
 }
 
+/** Reject impossible die faces before shared or stored data reaches game views. */
 function validateDicePairs(pairs) {
   if (
     !Array.isArray(pairs) ||
@@ -102,6 +104,7 @@ function validateDicePairs(pairs) {
     throwInvalidSave();
 }
 
+/** Validate event snapshots and verify that recorded casualties agree with the paired dice. */
 export function validateGameEvent(event, countryCodes) {
   if (
     !event ||
@@ -115,12 +118,20 @@ export function validateGameEvent(event, countryCodes) {
     !Array.isArray(event.board) ||
     event.board.length !== 10 ||
     new Set(event.board.map((c) => c?.code)).size !== 10 ||
+    // A factual dice snapshot may contain zero defenders immediately before its conquest event.
     event.board.some(
       (c) =>
         !countryCodes.has(c.code) ||
         !integerBetween(c.owner, 0, 9) ||
         !integerBetween(c.army, 0, 100000),
     )
+  )
+    throwInvalidSave();
+  // Diplomacy is optional event history; older saves keep their original board schema.
+  if (
+    (event.diplomacyState !== undefined && !isDiplomacyState(event.diplomacyState, event.round)) ||
+    (event.diplomacy !== undefined &&
+      (event.type !== 'decision' || !isDiplomacyFact(event.diplomacy, event.round)))
   )
     throwInvalidSave();
   if (event.pairs) {
@@ -139,6 +150,7 @@ export function validateGameEvent(event, countryCodes) {
   return event;
 }
 
+/** Exclude generated narration from the immutable factual event record. */
 export function factualEvent(event) {
   const { commentary: _commentary, commentaryVersion: _commentaryVersion, ...facts } = event;
   return facts;
@@ -150,6 +162,7 @@ export function encodeBoard(game) {
   return encodeValidatedBoard(validateGameBoard(game));
 }
 
+/** Separate original population/reward metadata from the changing owner and army values. */
 function encodeValidatedBoard(game) {
   return {
     ...game,
@@ -163,6 +176,7 @@ function encodeValidatedBoard(game) {
     countries: game.countries.map(({ code, owner, army }) => ({ code, owner, army })),
   };
 }
+/** Restore original country values, then validate the typed board before returning it. */
 export function decodeBoard(record) {
   if (
     !record ||
@@ -187,6 +201,7 @@ export function decodeBoard(record) {
     countries: game.countries.map((c) => ({ ...c, ...origins[c.code] })),
   });
 }
+/** Build a board-only record plus legacy JSON so old clients can still open saves. */
 export function campaignRecord(game) {
   const { events: _events, ...board } = validateGameBoard(game);
   return {
@@ -199,11 +214,22 @@ export function campaignRecord(game) {
     updatedAt: game.updatedAt,
   };
 }
+/** Read supported typed or legacy saves without migrating or rewriting them. */
 export function readCampaignRecord(record) {
+  if (
+    (record.saveRevision !== undefined &&
+      !integerBetween(record.saveRevision, 1, Number.MAX_SAFE_INTEGER)) ||
+    (record.historyHead !== undefined &&
+      record.historyHead !== null &&
+      (typeof record.historyHead !== 'string' || !/^[\w-]{1,60}$/.test(record.historyHead)))
+  )
+    throwInvalidSave();
+  // Versioned records use typed maps; legacy JSON remains readable without a migration write.
   if (record.schemaVersion === RECORD_VERSION) return decodeBoard(record.board);
   if (record.schemaVersion !== undefined && record.schemaVersion !== 1) throwInvalidSave();
   return validateGameBoard(JSON.parse(record.payload));
 }
+/** Encode one factual event with its stable history position and optional narration context. */
 export function eventRecord(event, sequence, game, context) {
   const facts = factualEvent(event);
   validateGameEvent(facts, new Set(game.countries.map((c) => c.code)));
@@ -216,6 +242,7 @@ export function eventRecord(event, sequence, game, context) {
     payload: JSON.stringify(facts),
   };
 }
+/** Read a compatible event format and validate its board when country codes are available. */
 export function readEventRecord(record, countryCodes) {
   if (
     record.schemaVersion !== undefined &&
