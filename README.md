@@ -1,166 +1,431 @@
 # Meridian Conquest
 
-A responsive, interactive frontend based on the supplied Figma design. The source is buildless HTML, CSS and ES modules, with separate UI, country-data and game-engine files.
+Meridian Conquest is a turn-based strategy web application developed for the
+University of Cape Town's **INF4001N Entrance Exam for 2027**. Inspired by Risk,
+it places ten real countries on a world map. Choose your starting country,
+build your army and defeat nine opposing commanders to control all ten countries.
 
-## Run locally
+The required single-player mode includes strategic NPCs, population-based armies,
+paired-dice combat and dynamic Gemini commentary. Multiplayer rooms, temporary
+alliances, an interactive adviser tutorial, replay and live spectators extend
+the same game rules.
 
-Use Node.js 24 LTS (also specified in `.nvmrc`). Run `npm ci`, then `npm run dev` and open http://localhost:8081. No build step is needed. Gameplay and saves work without an administrator CLI login.
+**[Play the game](https://meridian-conquest.vercel.app)** ·
+**[Source code](https://github.com/Muhammed112/Meridian_Conquest_UI)**
 
-For Gemini commentary on localhost, sign in with `npx firebase login` and restart `npm run dev`. This server binds only to your computer and configures a private App Check development token outside `dist`, under the ignored `.firebase/` directory. It never prints or deploys the token. You can also serve `dist` with any static server, such as `python3 -m http.server 8080 --directory dist`; local AI requires the development server's App Check setup.
+## Project status
 
-Run `npm run check` for formatting, linting (including syntax checks) and unit tests. Run `npm run browsers:install` once, then `npm run test:browser` for offline gameplay checks. Security-rule tests use Java 21 and `npm run test:rules`; they target only the isolated `demo-meridian` emulator on port 8180. Development dependencies are never bundled into the browser. See [contributor notes](CONTRIBUTING.md) for module boundaries and validation details.
+The application is deployed on Vercel and uses Firebase Authentication, Cloud
+Firestore and Firebase AI Logic. Firebase remains on the free Spark plan; the
+deployment does not use Cloud Functions or a personal Gemini API key.
 
-## Vercel deployment
+The latest application release, published on **5 November 2026**, is commit
+[`c10feed`](https://github.com/Muhammed112/Meridian_Conquest_UI/commit/c10feed).
+It includes the opening turn-order preview, **Alliance** label, compact action
+panels, updated report sharing and live-view presence notices. Its matching
+Firestore rules are deployed.
 
-Live game: [meridian-conquest.vercel.app](https://meridian-conquest.vercel.app).
+Release checks passed formatting, lint, **273 unit tests** and **18 Firestore
+permission tests**. Post-deployment checks matched 304 non-audio public files to
+the local source, confirmed seven private paths were unavailable, and checked the
+homepage and opening-order preview in a browser. The opening-order deployment
+check used a cloud-disabled fixture without creating a real campaign.
 
-The 4 November 2026 release includes the adviser tutorial with a personal welcome,
-typed rules and examples, an animated pointing hand, automatic control scrolling,
-guided diplomacy and the transfer-button fix. Commit `1da85c7` is on GitHub's
-`main` branch and deployed to the live site. Formatting, lint and all 245 unit
-tests passed, along with both tutorial browser suites. Deployment verification
-matched 299 published files and checked the homepage in a browser. This frontend
-release uses the existing published Firestore rules and indexes. See the
-[deployment guide](docs/VERCEL.md) for hosting and earlier release evidence.
+## Preview
 
-The repository includes `vercel.json` for static hosting: framework **Other**, no build or dependency installation, and `dist` as the public directory. Gameplay, Firebase saves and Gemini keep using the same browser code and Firebase project. No personal Gemini API key is needed in Vercel.
+![Meridian Conquest welcome screen with its strategy introduction and world-map preview](docs/images/meridian-conquest-home.png)
 
-See [Vercel setup](docs/VERCEL.md) for future deployments and hostname changes. The production domain is registered for Firebase/Gemini, and the spectator rules and index exemption are published. Publishing the frontend alone does not update Firestore permissions. The current release was deployed directly from local files; automatic GitHub deployments are not connected.
+The welcome map demonstrates attacks, transfers and captures using an in-memory
+board, without creating saved campaigns or requesting AI commentary. Real
+campaigns provide a country roster, interactive map, turn controls and separate
+Field reports and AI commentary tabs.
 
-## Design and verification
+## Features
 
-See the [architecture diagram](docs/ARCHITECTURE.md), [database schema](docs/DATABASE.md) and [assessment demonstration checklist](docs/ASSESSMENT.md). Campaign cards load without downloading every history; opening a campaign loads its events in bounded pages. Damaged histories have individual retries. Versioned saves detect competing changes and keep a local recovery copy when reloading. Keyboard focus survives gameplay redraws and phase changes.
+- **Single-player campaigns:** choose a country, draw nine distinct rivals and
+  maintain independent saves. Search countries and search/filter campaigns.
+- **Strategic opponents:** Easy, Medium, Hard and Extreme difficulty levels.
+  NPC decisions include explanations that remain visible in fast-forward.
+- **Combat presentation:** paired dice, delayed casualty reveals, troop movements,
+  distant-attack planes, capture effects, music and sound controls.
+- **Opening dice:** roll for the first turn, resolve ties and review the numbered
+  turn order before starting.
+- **AI commentary:** automatic narration for human and bot battles, with event
+  priorities, saved reports and factual fallback.
+- **Interactive tutorial:** Captain Mara welcomes the commander, types rules
+  and examples, and points to the next control during guided practice.
+- **Alliances:** negotiate three-round NPC pacts without combining armies or
+  changing the victory condition.
+- **Multiplayer:** room codes, searchable country reservations, individual
+  opening rolls and bots for empty seats.
+- **Sharing and replay:** anonymous read-only live viewing, player-left notices,
+  completed-game recordings and chronological replay controls.
+- **Accounts and saves:** player nicknames, password reset, private cloud saves,
+  browser recovery copies and protection against competing saves.
 
-Run `npm run test:ai` for the reviewed commentary checks. Entering a campaign prepares Gemini/App Check when commentary is enabled, without generating an extra report. Fresh generated reports are checked for matching event anchors and several explicit factual contradictions before saving. Human review remains necessary for unrestricted prose quality.
+## Technology and structure
 
-## Included
+| Area         | Implementation                                                     |
+| ------------ | ------------------------------------------------------------------ |
+| Frontend     | HTML, CSS and native JavaScript ES modules; no build step          |
+| Rules        | Separate game, battle and NPC strategy modules                     |
+| Database     | Cloud Firestore, an online NoSQL document database                 |
+| Accounts     | Firebase Authentication with email/password sign-in                |
+| AI           | Gemini through Firebase AI Logic and App Check                     |
+| Hosting      | Vercel static hosting of `dist`                                    |
+| Verification | Node.js tests, Playwright, Firestore emulator, ESLint and Prettier |
 
-Welcome, account-form previews, separate saved campaigns, searchable country setup, four difficulty levels, an interactive world map, reinforcement allocation, transfers, paired-dice combat, strategic NPC turns, fast playback, browser-local recovery, live read-only spectator links, legacy shared snapshots and chronological replay. A real Natural Earth map is included locally through world-atlas (ISC, Natural Earth public-domain geometry).
+The maintained browser source lives in `dist`; this is not a generated or
+minified build folder.
 
-Replay autoplay advances every five seconds so dice animations can finish and events remain readable. Pause playback or use the previous/next controls to review events at your own pace.
+```text
+dist/                  Browser application, game logic and bundled assets
+  controllers/         Player actions, campaign loading and NPC playback
+  ui/                  Shared views, tutorial, reports and map components
+scripts/               Development server, data tools and browser checks
+tests/                 Unit tests and isolated Firestore permission tests
+docs/                  Architecture, database, setup and tutorial documentation
+functions/             Optional server-side commentary alternative; not deployed
+```
 
-Choose Easy, Medium, Hard or Extreme before starting. Each campaign stores its own level and shows it on the board, campaign card and replay. Changing the selection does not redraw opponents. Medium retains the previous balanced strategy. Easy favours larger advantages, retreats sooner and gives the human commander more breathing room. Hard and Extreme concentrate more troops for attacks, prioritise eliminations and strong rivals, estimate follow-up opportunities and hopeless large battles, and apply increasing pressure to the human commander. Levels change NPC planning rather than dice, reinforcement amounts, transfer rules or animation speed. Tuning is centralised in `dist/difficulty.js`.
+See [architecture](docs/ARCHITECTURE.md) for module responsibilities and
+[database design](docs/DATABASE.md) for collections, immutable event history,
+save revisions and compatibility with existing campaigns.
 
-Each NPC battle phase records the reason for continuing or stopping, including the forces available. The same explanation is visible during fast-forward. Safety stops after 20 single-player phases or 30 multiplayer phases use an explicit regrouping explanation and the saved battle phase, so reloading does not reset that limit.
+## Installation
 
-This release starts the campaign list empty, removes the old `meridian-conquest-ui-v1` campaign collection on load, and never generates saved sample campaigns. New games save under `meridian-conquest-ui-v2` and remain available after reload. The profile and unrelated browser data are left intact. Sample boards are used only for automated tests and the in-memory welcome preview.
+### Requirements
 
-The welcome map loops through attacks, troop transfers and captures using the gameplay engine and its existing visual effects. Its scripted board stays in memory, makes no AI requests and never changes saved campaigns. The preview stops when the tab is hidden or you leave the welcome page, restarts when the tab becomes visible, and stays static with reduced motion enabled.
+- Node.js **24**, as specified in `.nvmrc`, with npm.
+- A modern browser with JavaScript and browser storage enabled. Desktop Chrome
+  is a supported development/test environment.
+- Internet access for accounts, cloud saves, multiplayer, live viewing and AI.
+  Country metadata, flags, map geometry and audio are bundled.
+- Java **21 or later** only if running Firestore emulator tests.
 
-The map includes flowing attack arrows, gold capture ripples and colour transitions, commander-coloured soldier squads and moving count badges during transfers and attack launches, plus floating troop changes, tumbling dice with delayed result highlights, short battle impacts, commander turn highlights and announcements, shared map/roster hover feedback, a pulsing selection and a final map zoom with a gold victory banner and brief confetti. Effects follow new campaign events and replay steps. Troops and missiles move through frame-by-frame SVG transforms in JavaScript. Red casualty badges show each affected country's actual losses on the map and roster after the dice settle; missiles are visual only. An Animations control lets players choose full or reduced motion, with full animations enabled by default. Asset versioning refreshes the changed animation code and styles. Resuming a save does not replay old combat effects. Animation state is never saved into the campaign or used for dice rolls and NPC decisions.
+### Run locally
 
-## Audio and dice presentation
+Clone the repository:
 
-Music preloads while the first screen is open, without playing or creating an AudioContext. Sound starts after the first pointer or keyboard interaction, as required by browsers. Music files use 128 kbps MP3, and the menu and campaign tracks have their opening silence removed. Scene changes use a short fade; the current music continues until the incoming track actually starts, preventing a loading gap. The Settings gear is available throughout the app and contains animation controls and sound settings. Sound settings include independent Music and Sound effects sliders, Mute all, a test chime and credits. Preferences are saved separately from campaigns. Music and active effects pause when the tab is hidden. Fast playback lowers battle effect levels and shortens the dice rattle; sounds are capped to avoid a wall of overlapping effects. Opening a save consumes its earlier events silently, while replay steps play the selected event's cues.
+```sh
+git clone https://github.com/Muhammed112/Meridian_Conquest_UI.git
+cd Meridian_Conquest_UI
+```
 
-Menus use Decisions by Kevin MacLeod. Entering a campaign crossfades to a separate orchestral track, Lost Frontier, for planning and ordinary replay; active battles use the quieter mix of Mechanolith, returning to the campaign track after the result. Leaving the board or replay restores the menu theme. Kenney CC0 samples supply button clicks, footsteps, dice rattle/landing and impacts. Original Web Audio synthesis supplies missile whooshes and turn, reinforcement, capture, victory, defeat and invalid-action cues. Local audio assets are in dist/assets/audio; music attribution is visible in Sound settings. No API keys or external audio requests are needed during play.
+For the submission ZIP, extract it and open a terminal in the folder containing
+`package.json` instead. Install the locked dependencies and start the server:
 
-Dice now visibly change faces and bounce for 1.1 seconds (0.55 seconds in fast playback), then reveal the exact stored battle result. Casualty badges and capture effects share that roll clock. Cosmetic faces use a deterministic animation clock rather than random numbers, and leave the combat rules, NPC strategy, saved event records and normal action pauses unchanged. Reduced motion retains static dice and immediate casualty feedback without tumbling.
+```sh
+npm ci
+npm run dev
+```
 
-In single-player and multiplayer, bots show each decision for five seconds before reinforcing, transferring, attacking, rolling again or retreating. Single-player **Fast forward** shortens this reading pause. Reduced motion keeps the full reading pause at normal speed. Gameplay continues independently of AI commentary requests.
+Open **http://localhost:8081**. The terminal prints the actual address. The server
+binds only to your computer. No build command or administrator CLI login is
+required for ordinary gameplay and account sign-in.
 
-Select **Diplomacy** under **Launch attack** to offer an NPC a temporary alliance
-in the same action card. Pacts last three rounds and cover both commanders' countries,
-while armies and turns stay separate. Betrayal lowers trust; only one commander can
-win. See [alliance rules and save behaviour](docs/DIPLOMACY.md).
+To use port **8082**, or another available port, in PowerShell:
 
-New players with no saved campaigns enter a 17-lesson interactive tutorial after
-signing in. Captain Mara welcomes the commander by name and types explanations,
-rules and examples into a dialogue above the map. **Continue** first finishes the
-current sentence, then advances to the next paragraph. An animated index finger
-points to the next control and scrolls it into view when needed. Reduced motion
-shows the full paragraph immediately and keeps the hand still. **Rules & examples**
-also provides the lesson's reference text.
+```powershell
+$env:MERIDIAN_PORT = '8082'
+npm run dev
+```
 
-The tutorial covers all 26 sections of the supplied instructions; see the
-[coverage checklist](docs/TUTORIAL.md). Players use the normal map and controls to
-reinforce, attack, inspect dice results, conquer, transfer, negotiate an NPC pact
-and retreat. The diplomacy lessons show a real three-round alliance and explain
-trust, expiry and betrayal. Selecting **Transfer soldiers** after conquest opens
-the transfer form and enters its lesson directly. Later lessons introduce reports
-and settings; multiplayer room codes are explained without a code-entry exercise.
+### Local AI setup
 
-Practice uses preset armies and guided dice, including the 10-versus-2 battle
-example. Its board stays in memory, separate from saved campaigns, multiplayer
-rooms and Gemini requests. Skip whenever you want, or replay from **Interactive
-tutorial** in My campaigns or **How to play**. The offer and completion are
-remembered separately for each account in this browser; clearing browser storage
-or using another device can show it again. Refreshing practice restarts the lesson.
+Local commentary needs an App Check development attestation. An operator with
+access to the configured Firebase project can run:
 
-## Integration boundary
+```sh
+npx firebase login
+npm run dev
+```
 
-This app supports optional Firebase Authentication, Firestore saves and Gemini commentary through Firebase AI Logic. Without Firebase configuration it runs as a local demo with preview account forms. With Firebase connected, credentials are sent securely to Firebase Authentication and campaigns are saved under the signed-in account. Sharing a signed-in campaign creates an opt-in live spectator link. Existing embedded snapshot links still work.
+The development server registers or reuses a private token under the ignored
+`.firebase` directory and serves it only on loopback. Static hosting serves an
+empty local-configuration stub. Reviewers without operator access can use the
+deployed site for commentary; an ordinary player does not need project
+administration access.
+
+See [Firebase setup](docs/FIREBASE.md) to configure another project. A plain
+static server can serve `dist`, but use `npm run dev` for local AI setup and
+background population updates.
+
+## Usage
+
+### Start a single-player campaign
+
+1. Create an account or sign in. Choose a player nickname; change it later through
+   **Settings → Player nickname**.
+2. New players with no saves are offered the interactive tutorial. Skip it or
+   replay it through **How to play** or **My campaigns**.
+3. Choose **New campaign**, enter a name, select a difficulty and search for your
+   starting country. Nine other countries are drawn randomly.
+4. Select **Roll my die**. All ten commanders roll; **Roll tie-break** rerolls only
+   tied leaders when necessary.
+5. Review the numbered **Turn order**, then select **Start campaign**. The winner
+   takes the first turn; remaining turns follow seat order from that winner.
+
+For example, if Atlas wins the opening roll, the preview lists Atlas first and
+then the remaining commanders in the same rotation the game will use. Existing
+campaigns retain their saved turn order and recorded player names.
+
+### Play a turn
+
+Select countries through the map, roster or action-panel controls. The roster
+shows flags, abbreviations, ownership and soldiers, grouped by commander with
+the largest holdings first.
+
+| Rule                | Behaviour                                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reinforcements      | From round two, receive two soldiers per owned country and allocate them before planning.                                                           |
+| Attack              | Select an owned country with at least two soldiers and any enemy target, regardless of borders or distance.                                         |
+| Dice pairs          | Both sides roll `min(attacker soldiers − 1, defender soldiers)` dice. Compare matching pairs; the lower die loses a soldier and ties cause no loss. |
+| Continue or retreat | Continue the same attack until conquest, retreat or one attacking soldier remains. Stopping an attack ends the turn.                                |
+| Conquest reward     | Gain `max(2, floor(original country soldier value / 2))` soldiers; one earned soldier garrisons the captured country.                               |
+| Transfers           | Move soldiers between your countries outside an active attack, retaining at least one at the origin.                                                |
+| Attack allowance    | One attack target per turn. Attacking is optional.                                                                                                  |
+| Victory             | A commander with no countries is eliminated. One commander must own all ten to win.                                                                 |
+
+Bots normally display decisions for five seconds. Single-player **Fast forward**
+shortens the pause while retaining gameplay and explanations. Replay autoplay
+also uses five-second steps, with pause and previous/next controls. Dice reveal
+recorded results after their animation; animation never determines outcomes.
+
+### Reports, commentary and settings
+
+**Field reports** contains factual decisions and battle outcomes.
+**AI commentary** contains narration. Enable it in Settings to narrate recent
+eligible action and new events automatically. **Generate commentary** is an
+optional retry.
+
+**Pin reports** bounds the feed and scales the map proportionally above it with
+a small gap. The map and reports remain together in the page layout and move
+together when the page scrolls. Messages scroll inside the report area. Use the
+arrow to collapse/expand the feed or **Unpin** to restore the normal layout.
+Incoming narration updates the feed without replacing the board.
+
+Settings also contains animation preferences, music/effect volumes, mute,
+audio credits and nickname controls. Full animations are enabled by default;
+reduced motion shows results without tumbling or moving effects. Sound starts
+after a user interaction, following browser autoplay controls.
+
+### Alliances
+
+During a clear planning phase, select **Alliance** in the right action panel.
+Choose an NPC and offer a three-round pact. Their decision considers strength,
+common threats and trust. The panel shows accepted pacts and remaining rounds;
+the allied roster group also has an indicator.
+
+Commanders keep their own armies and turns. Attacking an ally breaks the pact
+and lowers trust. It expires after three rounds, when either ally is eliminated,
+or when only the allies remain. Human-to-human proposals are outside this version.
+See [alliance rules](docs/DIPLOMACY.md); that guide uses the original term
+“Diplomacy” for the same feature.
+
+### Multiplayer
+
+1. Open **Multiplayer**, create a room and share its six-character code.
+2. Each signed-in friend reserves a different country using the searchable field.
+   Their account nickname carries into the room.
+3. The host selects **Roll for first turn**. Empty seats receive countries and
+   automatic bot rolls; each human selects **Roll my die**.
+4. Resolve ties, review the turn order and let the host start the match.
+
+Multiplayer uses the single-player game screen with controls relative to each
+viewer. Keep the host's room open for bot turns. Returning members can sign in
+and rejoin using the same code. Started matches retain their countries and order;
+room membership and turn permissions restrict who can act.
+
+### Live viewing and completed gameplay
+
+For an ongoing signed-in single-player campaign, use **Share live link** in the
+reports header or the campaign-card share icon. Visitors open the `#live/` link
+without signing in and see the board, up to 60 recent events and available
+commentary. They cannot play turns or negotiate.
+
+The owner must keep the game open for play to continue. Leaving shows
+**The player has left the game** above the retained position. An abrupt close or
+network loss can take about 80 seconds to detect; switching tabs alone does not
+mark the player offline. **Stop sharing** revokes the live link without deleting
+the private campaign.
+
+Completed campaigns use **Share gameplay**. Their `#watch/` links contain a fixed
+copy of the final board, up to 60 recent events and saved commentary. They work
+after the owner leaves and cannot be revoked. **Stop live sharing** separately
+revokes an earlier live link. Private replay retains the owner's full saved
+history. Public spectator links apply to single-player; multiplayer rooms remain
+member-only.
 
 ## Population data
 
-Choose from 233 countries and territories from the exam's [Worldometers population-by-country table](https://www.worldometers.info/world-population/population-by-country/), including Vatican City. Setup shows exact population counts, the estimate year and the snapshot date. Initial soldier bands use the unrounded counts, including populations below 100,000. These are annual estimates, not the site's per-second population clock. Small countries remain visible and selectable through their map markers and roster entries even when the bundled map has no outline for them.
+The catalogue contains **233 countries and territories**. Figures come from the
+brief's [Worldometers population table](https://www.worldometers.info/world-population/population-by-country/).
+Setup displays exact counts, estimate year and snapshot date. Starting-army bands
+use unrounded annual estimates:
 
-Names, ISO codes and coordinates derive from [mledoze/countries](https://github.com/mledoze/countries), with the original 24 countries' labels and map positions preserved for saved games. The generated metadata is available under ODbL 1.0; source attribution and the licence are in `dist/assets/COUNTRY_DATA_CREDITS.txt` and `COUNTRY_DATA_LICENSE.txt`. Population figures remain sourced separately from Worldometers. `npm run catalogue:refresh` regenerates the full catalogue and offline snapshot; review its changes before deploying. Population snapshots use version 2; the original 24-country reference can be upgraded without changing any saved game.
+| Population, inclusive upper bound | Starting soldiers |
+| --------------------------------- | ----------------: |
+| 5 million                         |                 1 |
+| 10 million                        |                 2 |
+| 25 million                        |                 3 |
+| 50 million                        |                 4 |
+| 75 million                        |                 5 |
+| 100 million                       |                 6 |
+| 125 million                       |                 7 |
+| 150 million                       |                 8 |
+| Above 150 million                 |                 9 |
 
-Setup country flags use bundled SVG images from
-[flag-icons 7.3.2](https://github.com/lipis/flag-icons/tree/v7.3.2), with its original
-licence in `dist/assets/flags/LICENSE`. The images work independently of native
-flag-emoji support and do not require an external image service during play.
+The app starts with a bundled snapshot and keeps working data when source checks
+fail. The development server checks in the background, at most daily after a
+successful refresh; failures can retry after an hour. The **Update country
+populations** GitHub workflow is scheduled for 05:23 UTC daily and needs the
+restricted updater account's repository secrets and enabled GitHub Actions.
 
-Run `npm run dev` and open http://localhost:8081 for automatic local updates. The development server checks Worldometers on startup and once per day while running, caching the last validated snapshot under the ignored `.firebase/population-cache.json`. It serves that snapshot immediately from `/population-data.json`; gameplay never waits for the source website. A source outage, missing country, changed table format, older year or unexpected change over 25% leaves the previous snapshot in place. Failed source checks retry after an hour. A large legitimate revision needs manual review. The browser also caches its working snapshot separately from campaigns.
+Updates affect new games and unsaved setups. Existing saves retain populations,
+original army values and rewards. Missing countries, older data, changed source
+structure and unexpected changes above 25% are rejected.
 
-Updates affect new games and the unsaved setup preview. Existing campaigns and rooms retain their saved populations, armies and conquest rewards. No player campaign is rewritten by the updater. A plain static server uses the bundled snapshot or public Firestore reference instead; use the development server for local source checks. Checks pause when your local server is off. Firebase stays on Spark; no Cloud Function or billing upgrade is used.
+| Operator command              | Purpose                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `npm run populations:update`  | Refresh the bundled offline snapshot.                                    |
+| `npm run catalogue:refresh`   | Regenerate country metadata and the snapshot.                            |
+| `npm run populations:publish` | Publish a validated public reference using Firebase CLI operator access. |
 
-The **Update country populations** GitHub Action is included in the GitHub backup. When enabled in the repository's Actions settings, it checks daily at 05:23 UTC (07:23 South Africa time) and publishes `publicData/populations` for hosted clients while your computer is off. Its dedicated Firebase account has encrypted credentials in GitHub Actions Secrets and is excluded from gameplay access. The scheduled job depends on the repository's GitHub Actions allowance and may be delayed by GitHub.
+Review generated changes before publishing. See
+[population setup and recovery](docs/FIREBASE.md#population-updates).
 
-Use `npm run populations:update` to refresh the bundled offline snapshot locally, then redeploy Hosting to distribute that bundle. See [Firebase setup](docs/FIREBASE.md#population-updates) for the one-time scheduler setup and recovery steps.
+## AI behaviour and limitations
 
-An operator signed in with the Firebase CLI can run `npm run populations:publish` to publish the validated reference to Firestore. This command writes only `publicData/populations` and uses a revision precondition; it does not migrate campaigns or enable billing. New snapshots, nicknames and other local UI changes require a Hosting deployment to reach the public website.
+The configured model is `gemini-3.5-flash-lite`, accessed through Firebase AI
+Logic. Narration uses event-time facts and impartial third-person wording for
+the whole match, including bot-versus-bot battles. Only the multiplayer host
+generates shared room reports; spectators do not request narration.
 
-Game rules and dice execute in the browser to keep Firebase Spark free. Multiplayer validates room membership, turn ownership, revisions, structured board fields and immutable starting-country data. It cannot prove that a participant generated fair random dice: fully authoritative competitive play requires a trusted server. Live spectator links apply to shared single-player campaigns; multiplayer rooms retain their existing member-only permissions.
+Each match keeps its most important pending event, preferring the newest on equal
+priority. Victories, eliminations and captures outrank routine exchanges. Stale
+requests are skipped so commentary does not hold up play. Reports are saved by
+event ID and reused on reload or replay. Entering a campaign prepares Gemini
+and App Check without generating an extra report.
 
-Use **Share live link** in the reports header, or the share icon on a campaign card, to copy a live viewing link. Visitors need no account and see the board, recent field reports and available AI commentary update as the owner plays. Only the signed-in owner can play turns or publish changes. **Stop sharing** in either location revokes the link. Private campaigns remain owner-only; sharing publishes an explicit gameplay copy under `liveGames`, without email addresses or account credentials. The recent history is bounded to 60 events, while the owner's complete private history is retained. The owner must keep the game open for play to continue; closing it leaves the last published position visible. Deploy the frontend, Firestore rules and index exemptions together to enable this feature on the public site. A localhost link is accessible only on that computer.
+Verification anchors and wording checks reject detected contradictions and
+premature outcomes before saving reports, but cannot prove every sentence
+correct. Latency and provider quotas still apply. Factual reports continue if
+AI is disabled, slow or unavailable.
 
-Completed campaigns use **Share gameplay** to copy a recorded `#watch/` link instead
-of starting a live stream. It includes the final board, up to 60 recent events and
-their saved commentary, and can be viewed after the owner leaves. These links
-contain a fixed copy and cannot be revoked. If a live link was shared earlier,
-**Stop live sharing** revokes that live link separately.
+Firestore enforces ownership, membership, turns, revisions and bounded move
+validation. Dice and full combat calculations run in the browser; there is no
+authoritative competitive game server. NPC battle safety limits are 20 phases
+in single-player and 30 in multiplayer, with a recorded regrouping explanation.
 
-Live-view presence shows **The player has left the game** above the retained board
-when the owner leaves, and clears it on return. An abrupt browser close or lost
-connection is detected within about 80 seconds through expiring heartbeats.
-Switching tabs alone does not mark the player offline. The new presence rules and
-frontend must be published together; see [presence setup](docs/FIREBASE.md#live-spectator-links).
+## Testing and code quality
 
-## Firebase and AI commentary
+Install dependencies with `npm ci` before running checks.
 
-Gemini 3.5 Flash-Lite adds brief, match-aware reports in the AI commentary tab in campaigns and multiplayer. A compact prompt and minimal reasoning reduce generation work. Each match keeps only its most important pending event, choosing the newest when priorities match, so fast-forward skips stale AI requests. Victories, eliminations and conquests take precedence over routine exchanges; all factual reports and NPC explanations remain visible. Its commentator follows the event-time standings, territorial lead changes and battle pressure, with recent wording memory to avoid repetitive stat readouts. Turning it on in Settings immediately requests recent action in the open campaign or hosted multiplayer match; new events continue automatically. **Generate commentary** remains an optional retry for saved events. Both paths consider the three latest eligible saved events without current-version reports and select the most important. This also refreshes older commentary while preserving the original reports. The panel shows queued, generating and error states. Reports are saved by event ID, so reloading and replaying reuse them. Turns continue if the model is slow or a free quota is exhausted.
+| Command                      | Purpose                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| `npm run check`              | Formatting, ESLint and all unit tests.                                                          |
+| `npm test`                   | Unit tests for rules, saves, rooms, commentary and presentation.                                |
+| `npm run test:ai`            | Offline commentary-validation examples; no Gemini requests.                                     |
+| `npm run browsers:install`   | Install Playwright Chromium for browser checks.                                                 |
+| `npm run test:browser`       | Local gameplay, map, setup, tutorial, report and spectator browser fixtures.                    |
+| `npm run test:rules`         | Firestore permissions in the isolated `demo-meridian` emulator on port 8180. Requires Java 21+. |
+| `npm run commentary:preview` | Real-Gemini evaluation; requires the dev server/operator setup and consumes model quota.        |
 
-Use the **Field reports** and **AI commentary** tabs to switch between the factual game log and generated reports. Commentary status and the optional Generate commentary button are in the AI tab. **Pin reports** keeps the existing panel at the bottom of the screen, aligned with the map column. Gameplay maps fill their panel's width, preserving the map's proportions, without title bars, badges or footer captions. Overlapping country labels move apart using thick, solid connectors in their commander's colour. Country markers keep their geographic positions, and labels remain clickable on the campaign map. Opening the panel brings the map into view when needed; subsequent reports do not move the page. Use its arrow to collapse or expand it, or **Unpin** to return it beneath the map. Selecting a tab also expands a collapsed panel. The tab, pin and collapse choices stay in place as turns and reports update, in campaigns and multiplayer; these controls do not change saved games.
+Ordinary unit, browser and emulator suites need no production accounts or Gemini
+generation requests. The browser helper can also use installed Chrome;
+`MERIDIAN_BROWSER_PATH` selects another executable. Separate live-integration
+scripts can create temporary accounts and data; read their instructions first.
+See [contributor checks](CONTRIBUTING.md#checks) for test scope and setup details.
 
-When reports are expanded and pinned, the whole map card scales proportionally to fit above them, leaving room for the map controls. The map fills the card without empty side strips. Collapsing or unpinning reports restores the full-width map.
+## Deployment
 
-New commentary uses impartial, third-person play-by-play for the whole match, including bot-versus-bot battles. It names the countries and commanders involved rather than addressing the viewer or giving advice. Saved nicknames remain unchanged; legacy "You" labels use a neutral commander name only in AI context. Previously saved reports retain their original wording.
+Vercel serves `dist` through `vercel.json`: framework **Other**, no build/install
+commands and no server functions. The production hostname is registered with
+Firebase Authentication and App Check.
 
-The narrator uses concise military strategy commentary with event-specific guidance for plans, retreat, defence, conquest, elimination and victory. Before new reports are saved, wording checks reject detected sports imagery, premature outcomes and explicit casualty contradictions. Recorded nicknames are exempt from these wording checks. `npm run commentary:preview` evaluates eight real-model scenarios in two bounded requests without writing campaigns; unrestricted prose still needs human review.
+For an operator already signed in and linked to the existing Vercel project:
 
-The connected project uses Firebase AI Logic with the Gemini Developer API on the free Spark plan. Requests require sign-in and App Check; no personal Gemini API key goes in the browser. See [the setup guide](docs/FIREBASE.md) for configuration, local development and access boundaries.
+```sh
+npm run check
+npx vercel deploy --prod
+```
 
-## Single-player opening dice
+Vercel deployment does not push Git commits or publish Firestore permissions.
+Automatic deployment from GitHub is not connected. Test and publish changed
+database rules separately when releasing compatible frontend changes:
 
-After choosing your country and opponents, select **Roll my die**. All ten commanders roll;
-the highest result takes the first turn. **Roll tie-break** rerolls only the tied leaders.
-The dice use the gameplay rolling animation and reveal the result once they settle.
-Reduced motion shows results immediately.
-Once the winner is decided, a numbered **Turn order** preview shows all ten commanders
-with their country flags before starting. Turns follow seat order from the dice winner;
-the preview also appears in multiplayer after all rolls and tie-breaks are resolved.
-Select **Start campaign** once there is a winner. Changing countries or redrawing opponents
-resets the opening rolls; editing the campaign name or difficulty retains them. Existing
-campaigns keep their saved turn order.
+```sh
+npm run test:rules
+npx firebase deploy --only firestore:rules,firestore:indexes --project meridian-conquest-m112
+```
 
-## Play with friends
+This publishes rules/indexes, not Firebase Hosting or Functions. See
+[Vercel setup](docs/VERCEL.md) for linking another computer and registering a
+new hostname.
 
-Choose your **Player nickname** when signing up, or open **Settings → Player nickname** (also available by clicking your profile). Nicknames are 2–32 characters and save to your Firebase account. The same nickname is used automatically when you create or join multiplayer rooms and when you start a new single-player campaign. Existing games keep their recorded player names and history.
+## Support and troubleshooting
 
-[Open multiplayer](https://meridian-conquest.vercel.app/#multiplayer).
+Use the [GitHub issue tracker](https://github.com/Muhammed112/Meridian_Conquest_UI/issues)
+to report reproducible problems. Include the URL, browser, game mode, action,
+expected result and visible error. Do not include passwords or tokens.
 
-Choose **Multiplayer**, create a room and share the six-character code. Each signed-in friend reserves a different starting country. Once everyone has chosen, the host opens **Roll for first turn**; empty seats receive distinct countries and automatic bot rolls. Each human clicks **Roll my die**. The highest roll goes first; the host opens a tie-break when needed, and only tied leaders reroll. Once a winner is known, the host starts the match. Remaining turns follow lobby seat order from that winner.
+| Problem                                       | First check                                                                 |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Old labels or layout                          | Refresh with **Ctrl+F5**.                                                   |
+| Local port already in use                     | Set `MERIDIAN_PORT` to a free port and restart the server.                  |
+| Local commentary unavailable                  | Use `npm run dev` and check operator App Check setup, or use the live site. |
+| Campaigns seem missing                        | Check the signed-in account; saves are account-specific.                    |
+| Shared localhost link fails on another device | Share from the deployed site instead.                                       |
+| Multiplayer bot turns stop                    | Keep the host's room open and connected.                                    |
+| Emulator rejects Java                         | Confirm `java -version` reports Java 21+ on this terminal's PATH.           |
 
-Multiplayer reuses the single-player game screen: the same roster, map, reinforcement steppers, attack and transfer controls, dice, and report tabs. Ownership and controls are relative to each viewer's seat; waiting friends cannot submit another player's move. Keep the host's room open for bot turns. A returning player can sign in and use the same code to reclaim their seat, country and recorded opening roll. Existing started matches retain their countries and order. See [Firebase setup](docs/FIREBASE.md#multiplayer-rooms) for the hosting and trust boundaries.
+Further help: [Firebase guide](docs/FIREBASE.md) and
+[tutorial coverage](docs/TUTORIAL.md).
+
+## Roadmap
+
+Possible future work includes a trusted backend for competitive anti-cheat,
+broader human-reviewed AI evaluations and further readability improvements on
+short desktop windows. These are future options, not implemented features.
+
+## Contributing
+
+This repository is maintained as a university assignment. Discuss substantial
+changes through an issue before opening a pull request. Follow
+[CONTRIBUTING.md](CONTRIBUTING.md): separate rules from presentation, reuse shared
+logic, explain non-obvious code, preserve saves and run appropriate checks.
+
+Exclude `.firebase/`, `.vercel/`, `.git/`, credentials, debug tokens, logs and
+`node_modules/` from the submission ZIP. Supply application test credentials
+and examiner database access through the required submission channel, not in
+source.
+
+## Author and acknowledgements
+
+Developed by [Muhammed (Muhammed112)](https://github.com/Muhammed112) for the
+INF4001N entrance assignment. Testers helped identify pacing, tutorial,
+country-label and report-layout issues. The interface builds on the supplied
+Figma design.
+
+| Resource           | Source and acknowledgement                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Population figures | Worldometers, as specified in the brief.                                                                   |
+| Country metadata   | [mledoze/countries](https://github.com/mledoze/countries), ODbL 1.0.                                       |
+| World map          | world-atlas and Natural Earth; ISC package licence and public-domain geometry.                             |
+| Flags              | [flag-icons 7.3.2](https://github.com/lipis/flag-icons/tree/v7.3.2), MIT licence.                          |
+| Music              | Kevin MacLeod: Decisions, Lost Frontier and Mechanolith, CC BY 4.0; credits also appear in Sound settings. |
+| Sound effects      | Kenney CC0 samples and original Web Audio cues.                                                            |
+
+## License
+
+No separate project-wide open-source licence is included for the original
+application source. Third-party materials retain their own licences and credits:
+
+- [Country metadata credits](dist/assets/COUNTRY_DATA_CREDITS.txt) and
+  [ODbL licence](dist/assets/COUNTRY_DATA_LICENSE.txt).
+- [world-atlas licence](dist/assets/world-atlas-LICENSE.txt).
+- [flag-icons licence](dist/assets/flags/LICENSE).
+- Music attribution in the application's **Settings → Sound** credits.
+
+Keep these notices with the relevant assets when preparing the submission.

@@ -91,5 +91,5 @@ are checked by the browser engine rather than an authoritative server.
 Free-form AI text is not independently authoritative. Complete competitive
 anti-cheat requires a trusted game service; this implementation does not claim it.
 
-See [database design](DATABASE.md), [assessment evidence](ASSESSMENT.md) and
-[contributor guidance](../CONTRIBUTING.md) for schema and verification details.
+See [database design](DATABASE.md) and [contributor guidance](../CONTRIBUTING.md)
+for schema and verification details.

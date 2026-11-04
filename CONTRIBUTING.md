@@ -6,8 +6,8 @@ that directory's conventional name. Do not minify or hand-edit generated assets.
 
 ## Module boundaries
 
-See [architecture](docs/ARCHITECTURE.md), [database design](docs/DATABASE.md) and
-[assessment evidence](docs/ASSESSMENT.md) for diagrams and demonstration checks.
+See [architecture](docs/ARCHITECTURE.md) and [database design](docs/DATABASE.md)
+for diagrams and module responsibilities. Verification commands are listed below.
 
 | Location                                                        | Responsibility                                                   |
 | --------------------------------------------------------------- | ---------------------------------------------------------------- |
