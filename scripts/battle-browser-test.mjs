@@ -26,20 +26,38 @@ async function checkFullWidthMap(page, selector = '.game-theatre') {
   );
 }
 
-/** Wait for dock layout and ensure reports cover neither the map nor its action controls. */
+/** Keep reports directly beneath the proportional map, with just the requested small gap. */
 async function checkPinnedMapLayout(page, selector = '.game-theatre') {
   await page.waitForFunction((selector) => {
     const theatre = document.querySelector(selector);
     const map = theatre.getBoundingClientRect();
     const reports = document.querySelector('[data-reports-panel]').getBoundingClientRect();
-    const actions = theatre.parentElement.querySelector('.board-actions')?.getBoundingClientRect();
-    return (
-      map.top >= 0 &&
-      map.bottom <= reports.top - 8 &&
-      (!actions || actions.bottom <= reports.top - 8)
-    );
+    return map.top >= 0 && Math.abs(reports.top - map.bottom - 12) < 1;
   }, selector);
   await checkFullWidthMap(page, selector);
+}
+
+/** Real page scrolling must move reports with their map rather than leave an overlay behind. */
+async function checkReportsMoveWithMap(page) {
+  const originalScroll = await page.evaluate(() => scrollY);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  const readPositions = () =>
+    page.evaluate(() => ({
+      map: document.querySelector('.game-theatre').getBoundingClientRect().top,
+      reports: document.querySelector('[data-reports-panel]').getBoundingClientRect().top,
+      scroll: scrollY,
+    }));
+  const before = await readPositions();
+  // Keep the pointer outside the history feed so the wheel scrolls the page itself.
+  await page.mouse.move(8, 8);
+  await page.mouse.wheel(0, 120);
+  await page.waitForFunction((initial) => scrollY > initial + 1, before.scroll);
+  const after = await readPositions();
+  const distance = after.scroll - before.scroll;
+  assert.ok(distance > 0, 'The browser actually scrolled the page');
+  assert.ok(Math.abs(after.map - before.map + distance) < 1, 'The map moves with the page');
+  assert.ok(Math.abs(after.reports - before.reports + distance) < 1, 'Reports move with the map');
+  await page.evaluate((top) => window.scrollTo({ top, behavior: 'instant' }), originalScroll);
 }
 
 try {
@@ -317,6 +335,64 @@ try {
     }
     await page.close();
   }
+  // Exercise the restored transfer entry through real controls, including after a failed attack.
+  // Engine-built outcomes catch broken routing that a markup-only test cannot detect.
+  for (const outcome of ['planning', 'held']) {
+    const game = GameEngine.create('Transfer entry check', 'ZA', true);
+    const source = game.countries.find((country) => country.owner === 0 && country.code !== 'ZA');
+    const destination = game.countries.find((country) => country.code === 'ZA');
+    const enemy = game.countries.find((country) => country.owner !== 0);
+    game.round = 1;
+    game.budget = 0;
+    source.army = 5;
+    destination.army = 2;
+    if (outcome === 'held') {
+      const engine = new GameEngine(game);
+      engine.startAttack(destination.code, enemy.code);
+      let rollIndex = 0;
+      engine.roll(() => (++rollIndex % 2 ? 1 : 6));
+      assert.equal(game.lastBattle.outcome, 'held');
+    }
+    const transferPage = await browser.newPage({
+      ignoreHTTPSErrors: true,
+      viewport: { width: 1536, height: 728 },
+    });
+    const errors = [];
+    transferPage.on('pageerror', (error) => errors.push(error.message));
+    await transferPage.addInitScript((game) => {
+      localStorage.setItem('meridian-conquest-ui-v2', JSON.stringify([game]));
+      localStorage.setItem('meridian-motion-preference', 'reduced');
+    }, game);
+    await transferPage.route('**/firebase-config.js', (route) =>
+      route.fulfill({ contentType: 'text/javascript', body: 'export const firebaseConfig=null;' }),
+    );
+    await transferPage.goto('http://localhost:' + server.address().port + '/#game/' + game.id);
+    const transferEntry = transferPage.locator('.action-panel [data-action="transfer"]');
+    await transferEntry.click();
+    await transferPage.locator('#transfer-from').selectOption(source.code);
+    await transferPage.locator('#transfer-to').selectOption(destination.code);
+    await transferPage.locator('#transfer-count').fill('2');
+    await transferPage.locator('[data-action="confirm-transfer"]').click();
+    const saved = await transferPage.evaluate(
+      () => JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0],
+    );
+    assert.equal(saved.countries.find((country) => country.code === source.code).army, 3);
+    assert.equal(
+      saved.countries.find((country) => country.code === destination.code).army,
+      destination.army + 2,
+    );
+    assert.equal(saved.attackUsed, game.attackUsed, 'Transferring cannot grant an extra attack.');
+    assert.equal(saved.events.at(-1).type, 'transfer');
+    assert.equal(
+      await transferEntry.count(),
+      1,
+      'The right panel retains a single transfer entry.',
+    );
+    assert.deepEqual(errors, []);
+    await transferPage.close();
+  }
+  console.log('PASS: planning and failed battles both open and complete a soldier transfer');
+
   // Report controls are presentation state: switching tabs must neither rewrite facts nor lose focus.
   const tabsGame = GameEngine.create('Report tabs check', 'ZA', true);
   const savedCommentary = 'Kestrel takes the lead in the recorded match.';
@@ -341,6 +417,7 @@ try {
   const fieldPanel = page.locator('[data-report-panel="field"]');
   const aiPanel = page.locator('[data-report-panel="ai"]');
   await fieldTab.waitFor();
+  assert.equal(await page.locator('.board-actions').count(), 0, 'Remove the unused toolbar row');
   const savedBeforeTabs = await page.evaluate(() =>
     localStorage.getItem('meridian-conquest-ui-v2'),
   );
@@ -369,7 +446,7 @@ try {
   // Treat generated narration as untrusted text and update it without replacing active game controls.
   const incoming = 'Brazil keeps up the pressure. <img src=x onerror=alert(1)>';
   const patchedInPlace = await page.evaluate(async (text) => {
-    const { updateReportsCommentary } = await import('./ui/reports.js');
+    const { updateReportsCommentary } = await import('./ui/reports.js?v=compact-panels-20261105-1');
     const game = JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0];
     game.events.at(-1).commentary = text;
     const field = document.querySelector('[data-report-panel="field"]');
@@ -399,16 +476,20 @@ try {
     const rect = panel.getBoundingClientRect();
     const controls = document.querySelector('.action-panel').getBoundingClientRect();
     return {
-      fixed: getComputedStyle(panel).position === 'fixed',
+      inFlow: getComputedStyle(panel).position === 'static',
       controlsClear: rect.right <= controls.left,
-      bottom: Math.round(innerHeight - rect.bottom),
-      reserved: parseFloat(getComputedStyle(document.body).paddingBottom) >= rect.height + 24,
+      belowMap: rect.top >= document.querySelector('.game-theatre').getBoundingClientRect().bottom,
+      noDockPadding: parseFloat(getComputedStyle(document.body).paddingBottom) === 0,
     };
   });
-  assert.deepEqual(dockLayout, { fixed: true, controlsClear: true, bottom: 12, reserved: true });
+  assert.deepEqual(dockLayout, {
+    inFlow: true,
+    controlsClear: true,
+    belowMap: true,
+    noDockPadding: true,
+  });
   const expandedHeight = (await reports.boundingBox()).height;
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
-  assert.equal(Math.round((await reports.boundingBox()).y + expandedHeight), 988);
+  await checkReportsMoveWithMap(page);
   await page.getByRole('button', { name: 'Collapse reports', exact: true }).click();
   assert.equal(await content.isVisible(), false);
   assert.equal((await worldMap.boundingBox()).height, originalMapHeight);
@@ -416,9 +497,9 @@ try {
   await page.locator('.country-roster [data-action="select-country"]').first().click();
   assert.equal(await reports.getAttribute('data-reports-collapsed'), 'true');
   assert.equal(await content.isVisible(), false);
-  assert.equal(await reports.evaluate((panel) => getComputedStyle(panel).position), 'fixed');
+  assert.equal(await reports.evaluate((panel) => getComputedStyle(panel).position), 'static');
   await page.evaluate(async () => {
-    const { updateReportsCommentary } = await import('./ui/reports.js');
+    const { updateReportsCommentary } = await import('./ui/reports.js?v=compact-panels-20261105-1');
     const game = JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0];
     game.events.at(-1).commentary = 'Brazil keeps up the pressure on the defending commander.';
     updateReportsCommentary(document, game);
@@ -439,7 +520,7 @@ try {
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   await page.screenshot({ path: '.firebase/reports-pin-desktop.png' });
   console.log(
-    'PASS: pinned reports stay within the map column, reserve scrolling space' +
+    'PASS: pinned reports stay attached below the map in normal page flow' +
       ' and retain collapse state across updates',
   );
 
@@ -449,6 +530,12 @@ try {
   await page.getByRole('button', { name: 'Expand reports', exact: true }).click();
   const expandedMap = await worldMap.boundingBox();
   assert.ok(expandedMap.height < fullMapHeight);
+  await checkPinnedMapLayout(page);
+  // Test the short desktop window from the reported issue, where space is most restricted.
+  await checkReportsMoveWithMap(page);
+  await page.locator('.country-roster [data-action="select-country"]').first().click();
+  await fieldTab.click();
+  await aiTab.click();
   await checkPinnedMapLayout(page);
   assert.ok(
     await worldMap
@@ -473,7 +560,7 @@ try {
   );
   const scrollBeforeReport = await page.evaluate(() => scrollY);
   await page.evaluate(async () => {
-    const { updateReportsCommentary } = await import('./ui/reports.js');
+    const { updateReportsCommentary } = await import('./ui/reports.js?v=compact-panels-20261105-1');
     const game = JSON.parse(localStorage.getItem('meridian-conquest-ui-v2'))[0];
     updateReportsCommentary(document, game);
   });
@@ -482,6 +569,8 @@ try {
   await page.setViewportSize({ width: 1536, height: 640 });
   await checkPinnedMapLayout(page);
   assert.ok((await worldMap.boundingBox()).height < expandedMap.height);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: '.firebase/reports-compact-panels-640.png' });
   console.log(
     'PASS: pinned reports leave the entire map and actions visible on short' +
       ' desktop windows, without empty strips inside the map card or scrolling for' +
@@ -501,19 +590,16 @@ try {
       .evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
     true,
   );
+  await checkReportsMoveWithMap(page);
   await page
     .locator('.action-panel .btn-full')
     .last()
-    .evaluate((button) => {
-      const dock = document.querySelector('[data-reports-panel]').getBoundingClientRect();
-      window.scrollBy({
-        top: button.getBoundingClientRect().bottom - dock.top + 24,
-        behavior: 'instant',
-      });
-    });
+    .evaluate((button) => button.scrollIntoView({ block: 'center', behavior: 'instant' }));
   const mobileControls = await page.locator('.action-panel .btn-full').last().boundingBox();
+  const mobileReports = await reports.boundingBox();
   assert.ok(mobileControls.y >= 0);
-  assert.ok(mobileControls.y + mobileControls.height <= (await reports.boundingBox()).y);
+  assert.ok(mobileControls.y + mobileControls.height <= 844);
+  assert.ok(mobileControls.y + mobileControls.height <= mobileReports.y);
   await page.screenshot({ path: '.firebase/reports-pin-mobile.png' });
   await page.getByRole('button', { name: 'Collapse reports', exact: true }).click();
   assert.equal(await content.isVisible(), false);
@@ -549,7 +635,7 @@ try {
       import('./multiplayer.js'),
       import('./rooms.js'),
       import('./engine.js'),
-      import('./ui/reports.js'),
+      import('./ui/reports.js?v=compact-panels-20261105-1'),
       import('./ui/map.js'),
       import('./ui/battle.js'),
     ]);
@@ -639,17 +725,33 @@ try {
   });
   assert.equal(await aiTab.getAttribute('aria-selected'), 'true');
   assert.match(await aiPanel.innerText(), /Atlas challenges Kestrel/);
-  assert.equal(await reports.evaluate((panel) => getComputedStyle(panel).position), 'fixed');
+  assert.equal(await reports.evaluate((panel) => getComputedStyle(panel).position), 'static');
   assert.equal(await fieldPanel.locator('.ai-commentary').count(), 0);
   assert.equal(await page.locator('[data-room-action="commentary"]').count(), 0);
   await page.evaluate(async () => {
-    const { setReportsDock } = await import('./ui/reports.js');
+    const { setReportsDock } = await import('./ui/reports.js?v=compact-panels-20261105-1');
     const panel = document.querySelector('[data-reports-panel]');
     setReportsDock(panel, { pinned: true, collapsed: true });
     setReportsDock(panel, { pinned: true, collapsed: false });
   });
   await checkPinnedMapLayout(page, '.board-grid .theatre');
   assert.equal(await page.locator('.reports-map-expanded').count(), 1);
+  // The shared renderer must keep its compact controls and map gap at both desktop heights.
+  for (const height of [728, 640]) {
+    await page.setViewportSize({ width: 1536, height });
+    // Resizing from the stacked mobile layout retains its old page scroll offset.
+    await page
+      .locator('.board-grid .theatre')
+      .evaluate((theatre) =>
+        window.scrollBy({ top: theatre.getBoundingClientRect().top - 16, behavior: 'instant' }),
+      );
+    await checkPinnedMapLayout(page, '.board-grid .theatre');
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      true,
+    );
+    await page.screenshot({ path: `.firebase/multiplayer-compact-panels-${height}.png` });
+  }
   await fieldTab.click();
   assert.match(await fieldPanel.innerText(), /A shared factual decision/);
   await page.evaluate(() => window.closeReportsRoom());

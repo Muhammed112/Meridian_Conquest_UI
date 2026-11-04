@@ -14,6 +14,15 @@ export function openingLeaders(initiative) {
   return initiative.contenders.filter((id) => initiative.rolls[id] === highest);
 }
 
+/** Preview the existing seat rotation only after the opening draw has one winner. */
+export function openingTurnOrder(initiative) {
+  if (!initiative?.winner) return [];
+  const first = initiative.players.indexOf(initiative.winner);
+  return first < 0
+    ? []
+    : [...initiative.players.slice(first), ...initiative.players.slice(0, first)];
+}
+
 /** Keep a tied round unresolved until its leaders have completed a tie-break. */
 function finishOpeningRound(initiative) {
   const leaders = openingLeaders(initiative);

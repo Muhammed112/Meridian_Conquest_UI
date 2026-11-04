@@ -3,12 +3,43 @@ import assert from 'node:assert/strict';
 import {
   openingDie,
   openingLeaders,
+  openingTurnOrder,
   createOpeningRolls,
   recordOpeningRoll,
   rerollOpeningLeaders,
 } from '../dist/opening-rolls.js';
+import { GameEngine } from '../dist/engine.js';
 
 const players = Array.from({ length: 10 }, (_, seat) => String(seat));
+
+// The preview must match the engine's complete saved order, including the wrap back to seat zero.
+test('the opening turn preview matches the actual game order for every possible first seat', () => {
+  const countries = GameEngine.create('Preview reference', 'ZA', true).countries.map(
+    (country) => country.code,
+  );
+  for (let firstSeat = 0; firstSeat < players.length; firstSeat++) {
+    let seat = 0;
+    const opening = createOpeningRolls(players, [], () => (seat++ === firstSeat ? 6 : 1));
+    const original = structuredClone(opening);
+    const game = GameEngine.create('Preview match', 'ZA', false, 'medium', null, {
+      countries,
+      firstSeat,
+    });
+    assert.deepEqual(openingTurnOrder(opening).map(Number), game.order);
+    assert.deepEqual(opening, original, 'Displaying the order must not change any opening roll.');
+  }
+});
+
+// An unresolved tie or a waiting friend must not expose a lineup based on an unfinished draw.
+test('the turn order waits for the last player and any tie-break before appearing', () => {
+  const waiting = createOpeningRolls(players, ['0'], () => 1);
+  assert.deepEqual(openingTurnOrder(waiting), []);
+  const tied = recordOpeningRoll(waiting, '0', 1);
+  assert.deepEqual(openingTurnOrder(tied), []);
+  let seat = 0;
+  const settled = rerollOpeningLeaders(tied, [], () => (seat++ === 4 ? 6 : 1));
+  assert.deepEqual(openingTurnOrder(settled), ['4', '5', '6', '7', '8', '9', '0', '1', '2', '3']);
+});
 
 // Every accepted byte must contribute equally so a single-player opening has no preferred face.
 test('opening dice distribute accepted byte values equally across all six faces', () => {

@@ -1,5 +1,5 @@
 import { escapeHTML } from '../html.js';
-import { renderIcon } from './components.js';
+import { renderButton, renderIcon } from './components.js';
 
 let dockObserver;
 
@@ -52,6 +52,7 @@ export function renderReports(
     tab = 'field',
     badge = '',
     commentaryAction = '',
+    sharing = null,
     live = false,
     limit = 12,
     dock = {},
@@ -87,7 +88,25 @@ export function renderReports(
             .join('')
         }</div
       ><div class="commentary-actions"
-        >${badge}<span data-commentary-actions ${active === 'ai' ? '' : 'hidden'}
+        >${badge}${
+          sharing
+            ? /* prettier-ignore */ `<span class="report-sharing" data-report-sharing="${escapeHTML(game.id)}"
+                >${renderButton(
+                  `${renderIcon('copy')} ${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share live link'}`,
+                  'share',
+                  'btn-sm',
+                  `data-id="${escapeHTML(game.id)}"`,
+                )}<span data-report-stop ${sharing.shared ? '' : 'hidden'}
+                  >${renderButton(
+                    Number.isInteger(game.winner) ? 'Stop live sharing' : 'Stop sharing',
+                    'stop-sharing',
+                    'btn-sm',
+                    `data-id="${escapeHTML(game.id)}"`,
+                  )}</span
+                ></span
+              >`
+            : ''
+        }<span data-commentary-actions ${active === 'ai' ? '' : 'hidden'}
           >${commentaryAction}</span
         ><button
           type="button"
@@ -139,7 +158,15 @@ export function renderReports(
   >`;
 }
 
-/** Replace the dock observer and fit the whole map and actions above expanded pinned reports. */
+/** Reflect sharing changes without replacing the board, active dice or report scroll position. */
+export function syncReportSharing(root, liveShares) {
+  for (const controls of root.querySelectorAll('[data-report-sharing]'))
+    controls.querySelector('[data-report-stop]').hidden = !liveShares.isShared(
+      controls.dataset.reportSharing,
+    );
+}
+
+/** Fit the map above bounded reports while both remain in the same scrolling column. */
 export function syncReportsDock(root) {
   dockObserver?.disconnect();
   dockObserver = null;
@@ -156,30 +183,13 @@ export function syncReportsDock(root) {
   }
   expandedMapColumn?.classList.add('reports-map-expanded');
   ownerDocument.documentElement.classList.toggle('reports-docked', Boolean(panel));
-  if (!panel) {
-    ownerDocument.documentElement.style.removeProperty('--reports-dock-height');
-    return;
-  }
-  // Measure actual panel height so expanded reports reserve space rather than cover controls.
-  const alignDock = () => {
-    const bounds = column.getBoundingClientRect();
-    panel.style.setProperty('--reports-dock-left', Math.max(12, bounds.left) + 'px');
-    panel.style.setProperty(
-      '--reports-dock-width',
-      Math.min(bounds.width, ownerDocument.documentElement.clientWidth - 24) + 'px',
-    );
+  if (!panel) return;
+  const fitMap = () => {
     const dockHeight = panel.getBoundingClientRect().height;
-    ownerDocument.documentElement.style.setProperty(
-      '--reports-dock-height',
-      Math.ceil(dockHeight) + 24 + 'px',
-    );
     if (expandedMapColumn) {
+      const gap = parseFloat(ownerDocument.defaultView.getComputedStyle(panel).marginTop) || 0;
       const availableHeight =
-        ownerDocument.documentElement.clientHeight -
-        dockHeight -
-        (column.querySelector('.board-actions')?.offsetHeight || 0) -
-        mapTopInset(column) -
-        24;
+        ownerDocument.documentElement.clientHeight - dockHeight - gap - mapTopInset(column) - 12;
       const mapWidth = Math.min(column.clientWidth - 2, Math.max(1, availableHeight) * 2);
       // Fit the whole card above reports without leaving empty strips beside the map.
       column.style.setProperty('--reports-map-width', mapWidth + 2 + 'px');
@@ -190,13 +200,13 @@ export function syncReportsDock(root) {
       );
     }
   };
-  alignDock();
-  dockObserver = new ResizeObserver(alignDock);
+  fitMap();
+  dockObserver = new ResizeObserver(fitMap);
   dockObserver.observe(panel);
   dockObserver.observe(panel.parentElement);
 }
 
-/** Update pin/collapse state in place and scroll the map into view only when newly expanded. */
+/** Update controls in place and reveal the map/report group only when newly expanded. */
 export function setReportsDock(panel, dock) {
   const wasExpanded =
     panel.classList.contains('is-pinned') && panel.dataset.reportsCollapsed === 'false';
@@ -219,7 +229,10 @@ export function setReportsDock(panel, dock) {
     if (!theatre) return;
     const bounds = theatre.getBoundingClientRect();
     const top = mapTopInset(panel.parentElement);
-    if (bounds.top < top || bounds.bottom > panel.getBoundingClientRect().top - 8)
+    if (
+      bounds.top < top ||
+      panel.getBoundingClientRect().bottom > panel.ownerDocument.documentElement.clientHeight - 12
+    )
       panel.ownerDocument.defaultView.scrollBy({ top: bounds.top - top, behavior: 'instant' });
   }
 }

@@ -24,7 +24,7 @@ export function renderDiplomacyPanel(game, { player, nameOf, isHuman, selectedPl
   const trustLabel = trust >= 70 ? 'High' : trust >= 40 ? 'Cautious' : 'Low';
 
   return /* HTML */ `<section class="panel action-panel diplomacy-panel"
-    ><div class="eyebrow">Diplomacy / Temporary pacts</div><h2>Negotiate a pact.</h2
+    ><div class="eyebrow">Alliance / Temporary pacts</div><h2>Negotiate a pact.</h2
     ><p class="explain">One ally. Three rounds. One eventual winner.</p
     >${
       alliance

@@ -1,5 +1,6 @@
 import { validateGameBoard, validateGameEvent } from './game-schema.js';
 import { normalizeCampaignCountries } from './country-compatibility.js';
+import { createLivePresence, watchLivePresence } from './live-presence.js';
 
 const gameFields = [
   'id',
@@ -163,10 +164,13 @@ export function readSpectatorGame(payload) {
 }
 
 /** Publish owner-authorized copies and provide read-only subscriptions for anonymous visitors. */
-export function createSpectatorService({ db, sdk, getUser }) {
+export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} }) {
   const active = new Set();
+  const presence = createLivePresence({ db, sdk, getUser, ...presenceOptions });
+  let playingGame = null;
   let generation = 0,
     queue = Promise.resolve();
+  const syncPlaying = () => presence.setPlayingGame(active.has(playingGame) ? playingGame : null);
   const target = (id) => {
     if (!/^[\w-]{1,60}$/.test(id || '')) throw new Error('Invalid live game link.');
     return sdk.doc(db, 'liveGames', id);
@@ -202,10 +206,17 @@ export function createSpectatorService({ db, sdk, getUser }) {
   }
   return {
     isShared: (id) => active.has(id),
+    /** Route changes report owner activity without making private games publicly visible. */
+    setPlayingGame(id) {
+      playingGame = id;
+      syncPlaying();
+    },
     /** Forget this account’s opt-ins and invalidate queued writes without deleting shared games. */
     reset() {
       generation++;
       active.clear();
+      playingGame = null;
+      syncPlaying();
     },
     /** Restore only this owner’s explicit shares after sign-in, ignoring stale reads. */
     async restore(read = sdk.getDocs) {
@@ -217,6 +228,7 @@ export function createSpectatorService({ db, sdk, getUser }) {
       );
       if (token !== generation || uid !== getUser()?.uid) return;
       for (const record of records.docs) if (record.data().ownerUid === uid) active.add(record.id);
+      syncPlaying();
     },
     /** Opt in only if the first publication succeeds; keep existing shares retryable. */
     async start(game) {
@@ -224,6 +236,8 @@ export function createSpectatorService({ db, sdk, getUser }) {
       active.add(game.id);
       try {
         await publish(game);
+        syncPlaying();
+        if (playingGame !== game.id) presence.markOffline(game.id);
       } catch (error) {
         if (!wasShared) active.delete(game.id);
         throw error;
@@ -241,15 +255,19 @@ export function createSpectatorService({ db, sdk, getUser }) {
       const wasShared = active.has(id);
       // Disable publication immediately so already queued saves cannot recreate a revoked share.
       active.delete(id);
+      syncPlaying();
       const token = generation;
       return write(() => sdk.deleteDoc(target(id))).catch((error) => {
-        if (wasShared && token === generation) active.add(id);
+        if (wasShared && token === generation) {
+          active.add(id);
+          syncPlaying();
+        }
         throw error;
       });
     },
     /** Observe one public game; a missing document signals revoked sharing. */
-    watch(id, onChange, onError) {
-      return sdk.onSnapshot(
+    watch(id, onChange, onError, onPresence = () => {}) {
+      const stopGame = sdk.onSnapshot(
         target(id),
         (snapshot) => {
           try {
@@ -260,6 +278,17 @@ export function createSpectatorService({ db, sdk, getUser }) {
         },
         onError,
       );
+      const stopPresence = watchLivePresence({
+        db,
+        sdk,
+        gameId: id,
+        onPresence,
+        ...presenceOptions,
+      });
+      return () => {
+        stopGame();
+        stopPresence();
+      };
     },
   };
 }

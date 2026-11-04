@@ -264,6 +264,90 @@ test('live links allow public viewing while only the campaign owner can publish 
   assert.equal((await getDoc(doc(owner, privatePath))).data().name, game.name);
 });
 
+/** Publish through owner permissions so presence tests exercise the real sharing prerequisite. */
+async function publishPresenceGame() {
+  const game = GameEngine.create('Live presence', 'ZA', true);
+  const owner = db('owner');
+  const privatePath = `users/owner/games/${game.id}`;
+  const path = `liveGames/${game.id}`;
+  await assertSucceeds(setDoc(doc(owner, privatePath), campaignRecord(game)));
+  await assertSucceeds(
+    setDoc(doc(owner, path), {
+      version: 1,
+      ownerUid: 'owner',
+      gameId: game.id,
+      payload: spectatorPayload(game),
+      updatedAt: serverTimestamp(),
+    }),
+  );
+  return { owner, path, privatePath };
+}
+
+// Visitors need live connection state, but only the owner may announce a tab arriving or leaving.
+test('live presence is publicly readable only while shared and only the owner can update it', async () => {
+  const { owner, path, privatePath } = await publishPresenceGame();
+  const presencePath = path + '/presence';
+  const sessionPath = presencePath + '/tab-one';
+  const session = doc(owner, sessionPath);
+  const record = { ownerUid: 'owner', online: true, updatedAt: serverTimestamp() };
+  await assertSucceeds(setDoc(session, record));
+  await assertSucceeds(setDoc(doc(owner, presencePath + '/tab-two'), record));
+  for (const viewer of [db(), db('stranger')]) {
+    assert.equal((await assertSucceeds(getDoc(doc(viewer, sessionPath)))).data().online, true);
+    assert.equal((await assertSucceeds(getDocs(collection(viewer, presencePath)))).size, 2);
+    await assertFails(getDoc(doc(viewer, privatePath)));
+    await assertFails(setDoc(doc(viewer, presencePath + '/forged'), record));
+    await assertFails(
+      updateDoc(doc(viewer, sessionPath), { online: false, updatedAt: serverTimestamp() }),
+    );
+    await assertFails(deleteDoc(doc(viewer, sessionPath)));
+  }
+  await assertFails(
+    setDoc(doc(db('stranger'), presencePath + '/stranger'), { ...record, ownerUid: 'stranger' }),
+  );
+  await assertSucceeds(updateDoc(session, { online: false, updatedAt: serverTimestamp() }));
+  assert.equal((await getDoc(doc(db(), sessionPath))).data().online, false);
+  await assertSucceeds(updateDoc(session, { online: true, updatedAt: serverTimestamp() }));
+  await assertSucceeds(deleteDoc(doc(owner, presencePath + '/tab-two')));
+  await assertSucceeds(deleteDoc(doc(owner, path)));
+  for (const viewer of [db(), db('stranger'), owner]) {
+    await assertFails(getDoc(doc(viewer, sessionPath)));
+    await assertFails(getDocs(collection(viewer, presencePath)));
+  }
+  await assertFails(updateDoc(session, { online: false, updatedAt: serverTimestamp() }));
+  await assertFails(deleteDoc(session));
+  assert.equal((await assertSucceeds(getDoc(doc(owner, privatePath)))).exists(), true);
+});
+
+// Heartbeats carry connection state only: fabricated timestamps and extra payload must be rejected.
+test('presence rejects unshared campaigns, invalid sessions and malformed heartbeat records', async () => {
+  const { owner, path } = await publishPresenceGame();
+  const record = { ownerUid: 'owner', online: true, updatedAt: serverTimestamp() };
+  const session = doc(owner, path + '/presence/tab-one');
+  const unshared = GameEngine.create('Unshared campaign', 'ZA', true);
+  await assertSucceeds(
+    setDoc(doc(owner, `users/owner/games/${unshared.id}`), campaignRecord(unshared)),
+  );
+  const unsharedSession = `liveGames/${unshared.id}/presence/tab-one`;
+  await assertFails(setDoc(doc(owner, unsharedSession), record));
+  await assertFails(getDoc(doc(db(), unsharedSession)));
+  await assertFails(getDocs(collection(db(), `liveGames/${unshared.id}/presence`)));
+  for (const invalidId of ['invalid.id', 'x'.repeat(61)]) {
+    await assertFails(setDoc(doc(owner, path + '/presence/' + invalidId), record));
+  }
+  const invalidRecords = [
+    { ...record, ownerUid: 'stranger' },
+    { ...record, online: 'true' },
+    { ...record, updatedAt: new Date(0) },
+    { ...record, extra: 'unrelated data' },
+    { ownerUid: 'owner', updatedAt: serverTimestamp() },
+  ];
+  for (const invalid of invalidRecords) await assertFails(setDoc(session, invalid));
+  await assertSucceeds(setDoc(session, record));
+  for (const invalid of invalidRecords) await assertFails(setDoc(session, invalid));
+  assert.equal((await getDoc(session)).data().online, true);
+});
+
 // Tighter move validation must still permit widely split legal funding and a legitimate final
 // conquest.
 test('split reinforcement across nine countries and the winning conquest remain valid', async () => {

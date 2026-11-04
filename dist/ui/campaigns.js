@@ -12,6 +12,7 @@ import { GameEngine } from '../engine.js';
 import { openingLeaders } from '../opening-rolls.js?v=opening-dice-20261104-1';
 import { diceMotion, rollPending } from '../motion.js?v=battle-reveal-20261026-1';
 import { openingDiceFrame } from './opening-dice.js?v=opening-dice-20261104-2';
+import { renderOpeningTurnOrder } from './opening-order.js?v=opening-order-20261105-1';
 
 /** Compose welcome, campaign catalogue, setup and authentication views from current context. */
 export function createCampaignViews(context) {
@@ -128,13 +129,14 @@ export function createCampaignViews(context) {
             class="icon-button"
             data-action="share"
             data-id="${game.id}"
-            aria-label="Share viewing-only game link"
+            aria-label="${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share viewing-only game link'}"
+            title="${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share live link'}"
             >${renderIcon('copy')}</button
           >${
             liveShares?.isShared(game.id)
               ? /* prettier-ignore */ `<button class="btn btn-sm" data-action="stop-sharing" data-id="${
                         escapeHTML(game.id)
-                      }">Stop sharing</button>`
+                      }">${Number.isInteger(game.winner) ? 'Stop live sharing' : 'Stop sharing'}</button>`
               : ''
           }</div
         ></div
@@ -477,11 +479,20 @@ export function createCampaignViews(context) {
                         ? 'The first turn is revealed when the dice settle.'
                         : opening
                           ? `Opening dice / Round ${opening.round}. ` +
-                            (opening.round > 1 ? 'Dimmed dice are out of the tie-break.' : 'Highest roll starts.')
+                            (opening.round > 1
+                              ? 'Dimmed dice are out of the tie-break.'
+                              : 'Highest roll starts. Turns then follow seat order.')
                           : 'You and all nine rivals roll a die. Highest roll starts.'
                     }</span
-                  ></div
-                ></div
+                  ></div>${
+                    !rolling && opening?.winner
+                      ? renderOpeningTurnOrder(
+                          opening,
+                          game.countries,
+                          (_id, seat) => game.playerNames?.[seat] || commanders[seat],
+                        )
+                      : ''
+                  }</div
               ><div class="setup-launch"
                 ><span class="small muted">Your next move awaits.</span
                 >${

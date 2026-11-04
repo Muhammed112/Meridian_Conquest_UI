@@ -43,6 +43,7 @@ async function openSetup(motion = 'full', viewport = { width: 1440, height: 900 
   });
   await page.goto(origin + '/#setup');
   await page.locator('[data-action="setup-roll"]').waitFor();
+  assert.equal(await page.locator('[data-opening-turn-order]').count(), 0);
   return page;
 }
 
@@ -51,6 +52,21 @@ async function faces(page) {
   return page
     .locator('.setup-opening-die .die')
     .evaluateAll((dice) => dice.map((die) => Number(die.dataset.dieFinal)));
+}
+
+/** The settled preview must show every seat in the same cyclic order the engine will save. */
+async function openingOrder(page, expectedSeat) {
+  const preview = page.locator('[data-opening-turn-order]');
+  await preview.waitFor();
+  const seats = await preview
+    .locator('li[data-opening-seat]')
+    .evaluateAll((items) => items.map((item) => Number(item.dataset.openingSeat)));
+  assert.deepEqual(
+    seats,
+    Array.from({ length: 10 }, (_, index) => (expectedSeat + index) % 10),
+    'The winner starts and all remaining seats follow the existing turn order.',
+  );
+  return seats;
 }
 
 /** Desktop seats run down five rows per column so every die stays visible after rolling. */
@@ -158,6 +174,7 @@ async function checkRolling(page, count) {
   );
   assert.equal(await page.locator('.setup-opening-die .die.winner').count(), 0);
   assert.equal(await page.locator('[data-action="create-game"]').count(), 0);
+  assert.equal(await page.locator('[data-opening-turn-order]').count(), 0);
   assert.doesNotMatch(
     await page.locator('[data-setup-opening-status]').textContent(),
     /will take the first turn|highest roll is tied/,
@@ -194,6 +211,7 @@ async function checkRolling(page, count) {
 /** Injecting an unavailable start action must still fail the controller guard. */
 async function checkStartGuard(page) {
   assert.equal(await page.locator('[data-action="create-game"]').count(), 0);
+  assert.equal(await page.locator('[data-opening-turn-order]').count(), 0);
   await page.evaluate(() => {
     const button = document.createElement('button');
     button.dataset.action = 'create-game';
@@ -217,6 +235,7 @@ async function checkStartGuard(page) {
 
 /** Compare the saved first turn with the displayed roll winner before later NPC decisions matter. */
 async function startAndRead(page, expectedSeat) {
+  const preview = await openingOrder(page, expectedSeat);
   const selectedCountries = await page
     .locator('.setup-roster-row')
     .evaluateAll((rows) => rows.map((row) => row.textContent.replace(/\s+/g, ' ').trim()));
@@ -228,6 +247,7 @@ async function startAndRead(page, expectedSeat) {
     CAMPAIGN_STORAGE_KEY,
   );
   assert.equal(game.order[0], expectedSeat);
+  assert.deepEqual(game.order, preview, 'The saved game must use the complete displayed order.');
   assert.equal(game.events[0].type, 'turn');
   assert.equal(game.events[0].player, expectedSeat);
   assert.equal(game.playerNames[0], 'Ace <Commander>');
@@ -258,6 +278,7 @@ try {
     );
   });
   assert.deepEqual(await faces(human), [6, 1, 2, 3, 4, 5, 1, 2, 3, 4]);
+  await openingOrder(human, 0);
   await human.screenshot({ path: '.firebase/single-player-opening-two-columns.png' });
   await checkLongRosterLabels(human);
   assert.equal(await human.locator('[data-action="create-game"]').isEnabled(), true);
@@ -269,6 +290,7 @@ try {
     completedFaces,
     'Editing settings must retain completed rolls.',
   );
+  await openingOrder(human, 0);
 
   // Replacing the lineup mid-animation must cancel its presentation without exposing stale results.
   await human.locator('[data-action="redraw-roster"]').click();
@@ -278,6 +300,7 @@ try {
     await page.locator('#country-options [data-action="setup-country"][data-code="BR"]').click();
     assert.equal(await page.locator('.setup-opening-die.dice-rolling').count(), 0);
     assert.deepEqual(await faces(page), []);
+    assert.equal(await page.locator('[data-opening-turn-order]').count(), 0);
   });
   await checkStartGuard(human);
   await roll(human, [5, 0, 1, 2, 3, 4, 0, 1, 2, 3]);
@@ -313,11 +336,17 @@ try {
     assert.equal(await page.locator('[data-setup-opening-rolling="true"]').count(), 0);
     assert.equal(await page.locator('.setup-opening-die.dice-rolling').count(), 0);
     assert.equal(await page.locator('[data-action="create-game"]').isEnabled(), true);
+    await openingOrder(page, 0);
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      true,
+      'The turn-order preview must fit narrow layouts without widening the page.',
+    );
   });
   await reduced.close();
   assert.deepEqual(errors, []);
   console.log(
-    'PASS: animated opening dice, concealed results, tied rerolls, reduced motion and saved first turn.',
+    'PASS: animated opening dice, concealed results, tied rerolls and complete saved turn-order previews.',
   );
 } finally {
   await browser?.close();

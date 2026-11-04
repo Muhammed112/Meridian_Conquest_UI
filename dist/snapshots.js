@@ -77,6 +77,8 @@ export function decodeSnapshot(text) {
     id: `shared-${i}`,
     type: allowedTypes.has(event?.type) ? event.type : 'campaign',
     text: String(event?.text || 'Recorded campaign event').slice(0, 500),
+    // Recorded gameplay keeps existing narration as plain text, without generating new reports.
+    commentary: typeof event?.commentary === 'string' ? event.commentary.slice(0, 500) : undefined,
     round: Number.isInteger(event?.round) && event.round > 0 ? event.round : data.round,
     player: Number.isInteger(event?.player) ? event.player : 0,
     at: Number.isFinite(event?.at) ? event.at : Date.now(),

@@ -456,6 +456,30 @@ service cloud.firestore {
       allow update: if owner(resource.data.ownerUid) && validShare()
         && request.resource.data.ownerUid == resource.data.ownerUid;
       allow delete: if owner(resource.data.ownerUid);
+
+      // Each browser tab owns a small heartbeat record; viewers never gain campaign access.
+      match /presence/{sessionId} {
+        function sharedGameExists() {
+          return exists(/databases/$(database)/documents/liveGames/$(gameId));
+        }
+        function ownsSharedGame() {
+          return sharedGameExists()
+            && owner(get(/databases/$(database)/documents/liveGames/$(gameId)).data.ownerUid);
+        }
+        function validPresence() {
+          let d = request.resource.data;
+          return sessionId.matches('^[A-Za-z0-9_-]{1,60}$')
+            && d.keys().hasOnly(['ownerUid','online','updatedAt'])
+            && d.ownerUid == request.auth.uid && d.online is bool
+            && d.updatedAt == request.time;
+        }
+        // Removing the public parent also revokes access to any remaining heartbeat records.
+        allow get, list: if sharedGameExists();
+        allow create: if ownsSharedGame() && validPresence();
+        allow update: if ownsSharedGame() && validPresence()
+          && request.resource.data.ownerUid == resource.data.ownerUid;
+        allow delete: if ownsSharedGame() && resource.data.ownerUid == request.auth.uid;
+      }
     }
     match /users/{uid}/games/{gameId} {
       allow read: if owner(uid);

@@ -10,7 +10,7 @@ import {
 import { createRoomService } from './rooms.js';
 import { firebaseConfig } from './firebase-config.js';
 import { normalizeNickname } from './profile.js';
-import { createSpectatorService } from './spectators.js';
+import { createSpectatorService } from './spectators.js?v=live-presence-20261104-1';
 import { CampaignStore } from './campaign-store.js';
 
 export const cloudEnabled = Boolean(firebaseConfig?.projectId);
@@ -122,7 +122,10 @@ export async function connectCloud({
       }
       return authSDK.signInWithEmailAndPassword(auth, email, password);
     },
-    signOut: () => authSDK.signOut(auth),
+    signOut: () => {
+      spectators.setPlayingGame(null);
+      return authSDK.signOut(auth);
+    },
     /** Update only the current account profile and reject stale account-change results. */
     async updateNickname(value) {
       const nickname = normalizeNickname(value),

@@ -17,7 +17,7 @@ import { colours, commanders } from '../data.js';
 import { cloudEnabled } from '../cloud.js?v=match-commentary-20261026-1';
 import { reportText, GameEngine } from '../engine.js';
 import { difficultyFor } from '../difficulty.js';
-import { renderReports } from './reports.js';
+import { renderReports } from './reports.js?v=compact-panels-20261105-1';
 import { allianceFor } from '../diplomacy.js';
 import { renderDiplomacyPanel } from './diplomacy.js';
 
@@ -191,13 +191,22 @@ export function createBattleViews(context) {
     return renderReports(game, {
       tab: state.reportTab,
       dock: state.reportDock,
-      badge: /* prettier-ignore */ `<span class="badge live">${
-        state.liveShareId
-          ? 'Live view'
-          : state.watch
-            ? 'Recorded'
-            : 'Campaign log'
-      }</span>`,
+      sharing:
+        cloudEnabled &&
+        context.cloud?.user &&
+        context.cloudReady &&
+        context.liveShares &&
+        state.view === 'game' &&
+        !state.watch &&
+        !state.liveShareId &&
+        game.mode !== 'multiplayer'
+          ? { shared: context.liveShares.isShared(game.id) }
+          : null,
+      badge: state.watch
+        ? /* prettier-ignore */ `<span class="badge live" ${state.liveShareId ? 'data-live-presence-badge' : ''}>${
+            state.liveShareId ? 'Live view' : 'Recorded'
+          }</span>`
+        : '',
       live: cloudEnabled && !state.watch && state.view !== 'tutorial',
       commentaryAction:
         cloudEnabled &&
@@ -263,6 +272,219 @@ export function createBattleViews(context) {
     >`;
   }
 
+  /** Show the turn budget and allocation controls without committing reinforcements. */
+  function renderReinforcementPanel(game, own, allocations) {
+    const used = Object.values(allocations).reduce((a, b) => a + b, 0),
+      remaining = game.budget - used;
+    return /* prettier-ignore */ `<section class="panel action-panel"
+        ><div class="eyebrow">01 / Start of your turn</div><h2>Reinforce your position.</h2
+        ><p class="explain"
+          >${own.length} controlled ${own.length === 1 ? 'country grants' : 'countries grant'}
+          ${game.budget} new soldiers. Place them where your next move begins.</p
+        ><div class="budget"
+          ><div
+            ><div class="caption">Available this turn</div
+            ><div class="budget-number">+${game.budget}</div></div
+          ><div
+            ><div class="caption">Remaining</div
+            ><div class="budget-number" style="text-align:right">${remaining}</div></div
+          ></div
+        >${
+          own
+            .map(
+              (c) => /* HTML */ `<div class="allocation-row"
+                ><div class="allocation-name"
+                  >${c.flag} ${c.name}<div class="small"
+                    >${c.army} → ${c.army + (allocations[c.code] || 0)} soldiers</div
+                  ></div
+                ><div class="stepper"
+                  ><button
+                    data-action="allocate-minus"
+                    data-code="${c.code}"
+                    aria-label="Remove one reinforcement from ${c.name}"
+                    title="Remove one assigned reinforcement"
+                    ${(allocations[c.code] || 0) === 0 ? 'disabled' : ''}
+                    >−</button
+                  ><output>+${allocations[c.code] || 0}</output
+                  ><button
+                    data-action="allocate-plus"
+                    data-code="${c.code}"
+                    aria-label="Add one reinforcement to ${c.name}"
+                    title="${remaining ? 'Assign one reinforcement' : 'All reinforcements are assigned'}"
+                    ${remaining === 0 ? 'disabled' : ''}
+                    >+</button
+                  ></div
+                ></div
+              >`,
+            )
+            .join('')
+        }${
+          renderButton(
+            'Confirm reinforcements',
+            'confirm-reinforce',
+            'btn-primary btn-full',
+            `aria-describedby="reinforcement-help" ${remaining !== 0 ? 'disabled' : ''}`,
+          )
+        }${renderButton('Deploy to strongest country', 'auto-allocate', 'btn-ghost btn-full')}<p
+          class="action-helper"
+          id="reinforcement-help"
+          >Allocate every soldier before moving or attacking.</p
+        ></section
+      >`;
+  }
+
+  /** Show owned-country transfer choices; confirmation still uses the engine validation. */
+  function renderTransferPanel(own, origin) {
+    const destinations = own.filter((c) => c.code !== origin?.code);
+    return /* prettier-ignore */ `<section class="panel action-panel"
+        ><div class="eyebrow">02 / Reposition</div><h2>Strength in the right place.</h2
+        ><p class="explain"
+          >Move soldiers between your countries. Leave at least one soldier behind.</p
+        ><div class="field-group"
+          ><label for="transfer-from" class="field-label">From</label
+          ><select id="transfer-from" class="field"
+            >${
+              own
+                .map(
+                  (c) =>
+                    /* prettier-ignore */ `<option value="${c.code}" ${origin?.code === c.code ? 'selected' : ''}>${
+                            c.flag
+                          } ${c.name} · ${c.army}</option>`,
+                )
+                .join('')
+            }</select
+          ></div
+        ><div class="field-group"
+          ><label for="transfer-to" class="field-label">To</label
+          ><select id="transfer-to" class="field"
+            >${
+              destinations
+                .map(
+                  (c) =>
+                    /* HTML */ `<option value="${c.code}">${c.flag} ${c.name} · ${c.army}</option>`,
+                )
+                .join('')
+            }</select
+          ></div
+        ><div class="field-group"
+          ><label for="transfer-count" class="field-label">Soldiers to transfer</label
+          ><input
+            class="field"
+            id="transfer-count"
+            type="number"
+            min="1"
+            max="${Math.max(1, (origin?.army || 1) - 1)}"
+            value="1" /></div
+        >${
+          renderButton(
+            `${renderIcon('transfer')} Transfer soldiers`,
+            'confirm-transfer',
+            'btn-teal btn-full',
+            !destinations.length || origin.army < 2 ? 'disabled' : '',
+          )
+        }${renderButton('Return to planning', 'planning', 'btn-ghost btn-full')}</section
+      >`;
+  }
+
+  /** Present a settled battle and the actions still available during the turn. */
+  function renderBattleResultPanel(game, transferButton, diplomacyButton) {
+    const win = game.lastBattle.outcome === 'conquest';
+    return /* prettier-ignore */ `<section class="panel action-panel"
+        ><div class="eyebrow">${win ? 'A new foothold' : 'Battle concluded'}</div
+        ><h2>${win ? 'A nation joins your command.' : 'The frontier holds.'}</h2
+        >${dicePairs(game.lastBattle.pairs)}<div class="recent-conquest"
+          >${
+            win
+              ? `${game.lastBattle.country} conquered · +${game.lastBattle.reward} soldiers earned.`
+              : 'Your remaining soldiers hold their position.'
+          }</div
+        ><p class="explain"
+          >${
+            win
+              ? 'One earned soldier garrisons the new territory. Transfer more soldiers to' +
+                ' strengthen it, or pass command to the next participant.'
+              : 'You have used your attack for this turn. Reposition your remaining troops or end your turn.'
+          }</p
+        >${transferButton}${diplomacyButton}${
+          renderButton(
+            `End turn ${renderIcon('arrow')}`,
+            'end-turn',
+            'btn-primary btn-full',
+          )
+        }</section
+      >`;
+  }
+
+  /** Show attack selection, transfer access and diplomacy for the planning phase. */
+  function renderPlanningPanel(
+    game,
+    { own, origin, target, local, alliance, transferButton, diplomacyButton },
+  ) {
+    const { nameOf } = context;
+    return /* prettier-ignore */ `<section class="panel action-panel"
+      ><div class="eyebrow">03 / Your next move</div><h2>The world is within reach.</h2
+      ><p class="explain"
+        >Choose your attacking nation, then set your sights on any rival country.</p
+      ><div class="field-group"
+        ><label for="attack-from" class="field-label">Your attacking country</label
+        ><select id="attack-from" class="field"
+          >${
+            own
+              .map(
+                (c) =>
+                  /* prettier-ignore */ `<option value="${c.code}" ${origin?.code === c.code ? 'selected' : ''}>${
+                        c.flag
+                      } ${c.name} · ${c.army}</option>`,
+              )
+              .join('')
+          }</select
+        ></div
+      ><div class="field-group"
+        ><label for="attack-to" class="field-label">Target country</label
+        ><select id="attack-to" class="field"
+          >${
+            game.countries
+              .filter((c) => c.owner !== local)
+              .map(
+                (
+                  c,
+                ) => /* HTML */ `<option value="${c.code}" ${target?.code === c.code ? 'selected' : ''}
+                  >${c.flag} ${c.name} · ${c.army}${alliance?.ally === c.owner ? ' (Ally)' : ''}</option
+                >`,
+              )
+              .join('')
+          }</select
+        ></div
+      >${
+        origin
+          ? /* HTML */ `<div class="selected-unit"
+              ><span class="flag">${origin.flag}</span
+              ><div class="unit-meta"
+                >${origin.name}<span>${Math.max(0, origin.army - 1)} available to attack</span></div
+              ><span class="unit-army">${origin.army}</span></div
+            >`
+          : ''
+      }${
+        alliance && target?.owner === alliance.ally
+          ? /* HTML */ `<p class="alliance-warning" role="status"
+              >Attacking ${nameOf(alliance.ally)} breaks your pact and lowers their trust.</p
+            >`
+          : ''
+      }${
+        renderButton(
+          `${renderIcon('swords')} Launch attack`,
+          'start-attack',
+          'btn-danger btn-full',
+          !origin || origin.army < 2 || game.attackUsed ? 'disabled' : '',
+        )
+      }${transferButton}${diplomacyButton}${renderButton('Skip this turn', 'end-turn', 'btn-ghost btn-full')}<p
+        class="action-helper"
+        >${origin && origin.army < 2 ? 'This country needs at least two soldiers to attack. ' : ''}
+        One target per turn. Keep rolling until you conquer, stop, or have one soldier left.</p
+      ></section
+    >`;
+  }
+
   /** Select spectator, bot, reinforcement or human controls from the current game phase. */
   function actionPanel(game) {
     const { owned, state, nameOf } = context;
@@ -282,7 +504,7 @@ export function createBattleViews(context) {
         ['diplomacy', 'diplomacy-result'].includes(context.tutorial?.step)) &&
       game.countries.some((country) => country.owner !== local && !isHuman(country.owner));
     const diplomacyButton = canNegotiate
-      ? renderButton(`${renderIcon('shield')} Diplomacy`, 'diplomacy', 'btn-full')
+      ? renderButton(`${renderIcon('shield')} Alliance`, 'diplomacy', 'btn-full')
       : '';
     // Check this before victory and normal phase controls to avoid leaking the pending outcome.
     if (game.presentationPending) {
@@ -300,10 +522,14 @@ export function createBattleViews(context) {
     }
     if (viewOnly)
       return /* prettier-ignore */ `<section class="panel action-panel"
-        ><div class="eyebrow">From the sidelines</div><h2>A world in motion.</h2
+        ><div class="eyebrow">${Number.isInteger(game.winner) ? 'Recorded gameplay' : 'From the sidelines'}</div
+        ><h2>${Number.isInteger(game.winner) ? 'Completed gameplay.' : 'A world in motion.'}</h2
         ><p class="explain"
           >${
-            state.liveShareId
+            Number.isInteger(game.winner)
+              ? `${nameOf(game.winner)} conquered the world in ${game.round} rounds. ` +
+                'View the final board or replay the recorded action.'
+              : state.liveShareId
               ? 'You are watching the shared game as its owner plays. Board changes, dice' +
                 ' and reports arrive automatically.'
               : 'You are viewing a read-only snapshot of this campaign. Inspect any country' +
@@ -320,7 +546,9 @@ export function createBattleViews(context) {
           >Start your own campaign ${renderIcon('arrow')}</a
         ><p class="action-helper"
           >${
-            state.liveShareId
+            Number.isInteger(game.winner)
+              ? 'This recording does not require the owner to keep the game open.'
+              : state.liveShareId
               ? 'The owner must keep their game open to continue playing. Visitors cannot make moves.'
               : 'Shared demo links contain a snapshot, rather than a live connection.'
           }</p
@@ -404,65 +632,7 @@ export function createBattleViews(context) {
           >Every decision, dice roll and outcome remains in the campaign log.</p
         ></section
       >`;
-    if (game.budget) {
-      const used = Object.values(state.allocations).reduce((a, b) => a + b, 0),
-        remaining = game.budget - used;
-      return /* prettier-ignore */ `<section class="panel action-panel"
-        ><div class="eyebrow">01 / Start of your turn</div><h2>Reinforce your position.</h2
-        ><p class="explain"
-          >${own.length} controlled ${own.length === 1 ? 'country grants' : 'countries grant'}
-          ${game.budget} new soldiers. Place them where your next move begins.</p
-        ><div class="budget"
-          ><div
-            ><div class="caption">Available this turn</div
-            ><div class="budget-number">+${game.budget}</div></div
-          ><div
-            ><div class="caption">Remaining</div
-            ><div class="budget-number" style="text-align:right">${remaining}</div></div
-          ></div
-        >${
-          own
-            .map(
-              (c) => /* HTML */ `<div class="allocation-row"
-                ><div class="allocation-name"
-                  >${c.flag} ${c.name}<div class="small"
-                    >${c.army} → ${c.army + (state.allocations[c.code] || 0)} soldiers</div
-                  ></div
-                ><div class="stepper"
-                  ><button
-                    data-action="allocate-minus"
-                    data-code="${c.code}"
-                    aria-label="Remove one reinforcement from ${c.name}"
-                    title="Remove one assigned reinforcement"
-                    ${(state.allocations[c.code] || 0) === 0 ? 'disabled' : ''}
-                    >−</button
-                  ><output>+${state.allocations[c.code] || 0}</output
-                  ><button
-                    data-action="allocate-plus"
-                    data-code="${c.code}"
-                    aria-label="Add one reinforcement to ${c.name}"
-                    title="${remaining ? 'Assign one reinforcement' : 'All reinforcements are assigned'}"
-                    ${remaining === 0 ? 'disabled' : ''}
-                    >+</button
-                  ></div
-                ></div
-              >`,
-            )
-            .join('')
-        }${
-          renderButton(
-            'Confirm reinforcements',
-            'confirm-reinforce',
-            'btn-primary btn-full',
-            `aria-describedby="reinforcement-help" ${remaining !== 0 ? 'disabled' : ''}`,
-          )
-        }${renderButton('Deploy to strongest country', 'auto-allocate', 'btn-ghost btn-full')}<p
-          class="action-helper"
-          id="reinforcement-help"
-          >Allocate every soldier before moving or attacking.</p
-        ></section
-      >`;
-    }
+    if (game.budget) return renderReinforcementPanel(game, own, state.allocations);
     if (game.battle) {
       const a = game.countries.find((c) => c.code === game.battle.from),
         d = game.countries.find((c) => c.code === game.battle.to);
@@ -496,146 +666,20 @@ export function createBattleViews(context) {
         selectedPlayer: state.diplomacyTarget,
       });
     }
-    if (state.action === 'transfer') {
-      const destinations = own.filter((c) => c.code !== origin?.code);
-      return /* prettier-ignore */ `<section class="panel action-panel"
-        ><div class="eyebrow">02 / Reposition</div><h2>Strength in the right place.</h2
-        ><p class="explain"
-          >Move soldiers between your countries. Leave at least one soldier behind.</p
-        ><div class="field-group"
-          ><label for="transfer-from" class="field-label">From</label
-          ><select id="transfer-from" class="field"
-            >${
-              own
-                .map(
-                  (c) =>
-                    /* prettier-ignore */ `<option value="${c.code}" ${origin?.code === c.code ? 'selected' : ''}>${
-                            c.flag
-                          } ${c.name} · ${c.army}</option>`,
-                )
-                .join('')
-            }</select
-          ></div
-        ><div class="field-group"
-          ><label for="transfer-to" class="field-label">To</label
-          ><select id="transfer-to" class="field"
-            >${
-              destinations
-                .map(
-                  (c) =>
-                    /* HTML */ `<option value="${c.code}">${c.flag} ${c.name} · ${c.army}</option>`,
-                )
-                .join('')
-            }</select
-          ></div
-        ><div class="field-group"
-          ><label for="transfer-count" class="field-label">Soldiers to transfer</label
-          ><input
-            class="field"
-            id="transfer-count"
-            type="number"
-            min="1"
-            max="${Math.max(1, (origin?.army || 1) - 1)}"
-            value="1" /></div
-        >${
-          renderButton(
-            `${renderIcon('transfer')} Transfer soldiers`,
-            'confirm-transfer',
-            'btn-teal btn-full',
-            !destinations.length || origin.army < 2 ? 'disabled' : '',
-          )
-        }${renderButton('Return to planning', 'planning', 'btn-ghost btn-full')}</section
-      >`;
-    }
-    if (game.lastBattle) {
-      const win = game.lastBattle.outcome === 'conquest';
-      return /* prettier-ignore */ `<section class="panel action-panel"
-        ><div class="eyebrow">${win ? 'A new foothold' : 'Battle concluded'}</div
-        ><h2>${win ? 'A nation joins your command.' : 'The frontier holds.'}</h2
-        >${dicePairs(game.lastBattle.pairs)}<div class="recent-conquest"
-          >${
-            win
-              ? `${game.lastBattle.country} conquered · +${game.lastBattle.reward} soldiers earned.`
-              : 'Your remaining soldiers hold their position.'
-          }</div
-        ><p class="explain"
-          >${
-            win
-              ? 'One earned soldier garrisons the new territory. Transfer more soldiers to' +
-                ' strengthen it, or pass command to the next participant.'
-              : 'You have used your attack for this turn. Reposition your remaining troops or end your turn.'
-          }</p
-        >${win ? renderButton('Transfer soldiers', 'transfer', 'btn-teal btn-full') : ''}${diplomacyButton}${
-          renderButton(
-            `End turn ${renderIcon('arrow')}`,
-            'end-turn',
-            'btn-primary btn-full',
-          )
-        }</section
-      >`;
-    }
-    return /* prettier-ignore */ `<section class="panel action-panel"
-      ><div class="eyebrow">03 / Your next move</div><h2>The world is within reach.</h2
-      ><p class="explain"
-        >Choose your attacking nation, then set your sights on any rival country.</p
-      ><div class="field-group"
-        ><label for="attack-from" class="field-label">Your attacking country</label
-        ><select id="attack-from" class="field"
-          >${
-            own
-              .map(
-                (c) =>
-                  /* prettier-ignore */ `<option value="${c.code}" ${origin?.code === c.code ? 'selected' : ''}>${
-                        c.flag
-                      } ${c.name} · ${c.army}</option>`,
-              )
-              .join('')
-          }</select
-        ></div
-      ><div class="field-group"
-        ><label for="attack-to" class="field-label">Target country</label
-        ><select id="attack-to" class="field"
-          >${
-            game.countries
-              .filter((c) => c.owner !== local)
-              .map(
-                (
-                  c,
-                ) => /* HTML */ `<option value="${c.code}" ${target?.code === c.code ? 'selected' : ''}
-                  >${c.flag} ${c.name} · ${c.army}${alliance?.ally === c.owner ? ' (Ally)' : ''}</option
-                >`,
-              )
-              .join('')
-          }</select
-        ></div
-      >${
-        origin
-          ? /* HTML */ `<div class="selected-unit"
-              ><span class="flag">${origin.flag}</span
-              ><div class="unit-meta"
-                >${origin.name}<span>${Math.max(0, origin.army - 1)} available to attack</span></div
-              ><span class="unit-army">${origin.army}</span></div
-            >`
-          : ''
-      }${
-        alliance && target?.owner === alliance.ally
-          ? /* HTML */ `<p class="alliance-warning" role="status"
-              >Attacking ${nameOf(alliance.ally)} breaks your pact and lowers their trust.</p
-            >`
-          : ''
-      }${
-        renderButton(
-          `${renderIcon('swords')} Launch attack`,
-          'start-attack',
-          'btn-danger btn-full',
-          !origin || origin.army < 2 || game.attackUsed ? 'disabled' : '',
-        )
-      }${diplomacyButton}${renderButton('Skip this turn', 'end-turn', 'btn-ghost btn-full')}<p
-        class="action-helper"
-        >${origin && origin.army < 2 ? 'This country needs at least two soldiers to attack. ' : ''}
-        One target per turn. Keep rolling until you conquer, stop, or have one soldier left.</p
-      ></section
-    >`;
+    if (state.action === 'transfer') return renderTransferPanel(own, origin);
+    // Keep transfers available before an attack and after either battle outcome.
+    const transferButton =
+      own.length >= 2 ? renderButton('Transfer soldiers', 'transfer', 'btn-teal btn-full') : '';
+    if (game.lastBattle) return renderBattleResultPanel(game, transferButton, diplomacyButton);
+    return renderPlanningPanel(game, {
+      own,
+      origin,
+      target,
+      local,
+      alliance,
+      transferButton,
+      diplomacyButton,
+    });
   }
 
   /** Compose the normal board, optional practice guide and reports without mutating gameplay. */
@@ -687,7 +731,10 @@ export function createBattleViews(context) {
                                   'Only the signed-in owner controls this campaign.'
                                 : 'This link shows a recorded snapshot. ' +
                                   'You can inspect the board and replay its history.'
-                            }</span
+                            }<span class="live-player-notice" role="status" data-live-presence-notice
+                              ${state.livePresence === 'offline' ? '' : 'hidden'}
+                              >The player has left the game. Showing the last saved position.</span
+                            ></span
                 ></div
               >`
             : ''
@@ -696,7 +743,7 @@ export function createBattleViews(context) {
             ><div class="caption">Current round</div
             ><div class="value"
               >${String(game.round).padStart(2, '0')}
-              <span class="small muted">/ ongoing</span></div
+              <span class="small muted">/ ${Number.isInteger(game.winner) ? 'complete' : 'ongoing'}</span></div
             ></div
           ><div class="game-stat"
             ><div class="caption">Current turn</div
@@ -735,36 +782,7 @@ export function createBattleViews(context) {
                 target: state.target,
                 motion: motionFrame,
               })
-            }<div
-              class="board-actions"
-              >${
-                renderButton(
-                  `${renderIcon('transfer')} Transfer soldiers`,
-                  'transfer',
-                  'btn-teal',
-                  e.current !== local || game.budget || game.battle || own.length < 2 || state.watch
-                    ? 'disabled'
-                    : '',
-                )
-              }${
-                renderButton(
-                  `${renderIcon('skip')} Skip turn`,
-                  'end-turn',
-                  '',
-                  e.current !== local || game.budget || game.battle || state.watch ? 'disabled' : '',
-                )
-              }${
-                cloudEnabled && context.cloud?.user && context.cloudReady &&
-                !state.watch && !guide && game.mode !== 'multiplayer'
-                  ? renderButton(
-                      renderIcon('copy'),
-                      'share',
-                      'copy-live-link',
-                      'aria-label="Copy live viewing link" title="Copy live viewing link"',
-                    )
-                  : ''
-              }${renderButton(`${renderIcon('info')} Rules`, 'help', 'btn-ghost')}</div
-            >${feed(game)}</div
+            }${feed(game)}</div
           >${
             guide
               ? `<div class="tutorial-action-column">${adviserGuide ? '' : guide}${

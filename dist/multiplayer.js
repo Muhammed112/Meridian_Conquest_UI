@@ -1,12 +1,17 @@
 import { escapeHTML } from './html.js';
 import { catalogue, colours, findCountry } from './data.js';
 import { applyCommentary } from './commentary.js?v=match-commentary-20261026-1';
-import { normalizeRoomCode, readRoomGame } from './rooms.js';
+import {
+  normalizeRoomCode,
+  readRoomGame,
+  roomPlayerNames,
+} from './rooms.js?v=opening-order-20261105-1';
 import { playerNickname } from './profile.js';
-import { updateReportsCommentary } from './ui/reports.js';
+import { updateReportsCommentary } from './ui/reports.js?v=compact-panels-20261105-1';
 import { openingLeaders, validateRoomSetup } from './room-setup.js';
 import { applyBoardChoice } from './controllers/board-actions.js';
 import { NPC_DECISION_DELAY } from './motion.js?v=battle-reveal-20261026-1';
+import { renderOpeningTurnOrder } from './ui/opening-order.js?v=opening-order-20261105-1';
 
 /** Own lobby/board interaction and host bot scheduling without changing the shared game rules. */
 export function createMultiplayerUI({
@@ -324,7 +329,8 @@ export function createMultiplayerUI({
   function openingView() {
     const setup = room.initiative;
     const leaders = openingLeaders(setup);
-    const names = (id) => room.members[id]?.name || `Bot ${setup.players.indexOf(id) + 1}`;
+    const playerNames = roomPlayerNames(room);
+    const names = (id) => playerNames[setup.players.indexOf(id)];
     const canRoll = setup.contenders.includes(account().uid) && !setup.rolls[account().uid];
     return `<section class="panel room-opening"><div class="panel-body">
       <div class="eyebrow">Opening dice / Round ${setup.round}</div><h2>Roll for the first turn.</h2>
@@ -347,6 +353,7 @@ export function createMultiplayerUI({
             ? '<p role="status">The highest roll is tied. Only tied leaders roll again.</p>'
             : '<p role="status">Waiting for the remaining players to roll.</p>'
       }
+      ${renderOpeningTurnOrder(setup, setup.countries.map(findCountry), names)}
       ${room.hostUid === account().uid && leaders.length > 1 ? button('Begin tie-break', 'reroll', busy) : ''}
       ${room.hostUid === account().uid && setup.winner ? button('Start match', 'start', busy) : ''}
       </div></section>`;

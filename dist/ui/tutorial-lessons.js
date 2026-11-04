@@ -163,7 +163,7 @@ export const tutorialLessons = {
     summary:
       'Diplomacy lets commanders agree to cooperate for three rounds. The pact' +
       ' covers every country each ally owns.',
-    task: 'Open Diplomacy, choose an available rival commander, then select Offer three-round pact.',
+    task: 'Open Alliance, choose an available rival commander, then select Offer three-round pact.',
     notes: [
       'An NPC weighs your military support, common threats and trust before' +
         ' accepting. Your practice rivals have enough reason to cooperate.',
@@ -182,9 +182,9 @@ export const tutorialLessons = {
   'diplomacy-result': {
     title: 'Your pact is agreed.',
     summary:
-      'Your ally accepted. The Diplomacy panel now shows your ally, three rounds' +
+      'Your ally accepted. The Alliance panel now shows your ally, three rounds' +
       ' remaining and the trust between your commanders.',
-    task: 'Check the accepted pact in Diplomacy, then continue to end your turn.',
+    task: 'Check the accepted pact in Alliance, then continue to end your turn.',
     next: 'Continue the lesson',
     notes: [
       'The pact expires after three rounds. An ally being eliminated, or only' +

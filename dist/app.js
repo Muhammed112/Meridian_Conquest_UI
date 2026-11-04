@@ -1,9 +1,9 @@
 import { escapeHTML } from './html.js';
-import { bindAppEvents } from './controllers/events.js?v=opening-dice-20261104-2';
+import { bindAppEvents } from './controllers/events.js?v=compact-panels-20261105-1';
 import { applyCommentary } from './commentary.js?v=match-commentary-20261026-1';
 import { localDevelopment } from './ai-local-config.js';
-import { createMultiplayerUI } from './multiplayer.js';
-import { connectCloud, cloudEnabled } from './cloud.js?v=match-commentary-20261026-1';
+import { createMultiplayerUI } from './multiplayer.js?v=opening-order-20261105-1';
+import { connectCloud, cloudEnabled } from './cloud.js?v=live-presence-20261104-1';
 import { firebaseConfig } from './firebase-config.js';
 import { catalogue, commanders, armyValue, populationReference } from './data.js';
 import {
@@ -23,16 +23,22 @@ import {
 import { SoundDirector } from './audio.js?v=quick-audio-20261024-1';
 import { playerNickname } from './profile.js';
 import { renderIcon } from './ui/components.js';
-import { encodeSnapshot, decodeSnapshot } from './snapshots.js';
+import { encodeSnapshot, decodeSnapshot } from './snapshots.js?v=compact-panels-20261105-1';
+import { spectatorPayload } from './spectators.js';
 import { createNavigation } from './ui/navigation.js';
 import { createMapView } from './ui/map.js';
 import { syncMapLabels } from './ui/map-labels.js';
 import { createWelcomeDemo } from './ui/welcome-demo.js';
 import { createTutorialPresentation } from './ui/tutorial-presentation.js';
-import { createCampaignViews } from './ui/campaigns.js?v=opening-dice-20261104-3';
+import { createCampaignViews } from './ui/campaigns.js?v=opening-order-20261105-1';
 import { openingDiceFrame } from './ui/opening-dice.js?v=opening-dice-20261104-2';
-import { createBattleViews } from './ui/battle.js';
-import { updateReportsCommentary, syncReportsDock } from './ui/reports.js';
+import { createBattleViews } from './ui/battle.js?v=compact-panels-20261105-1';
+import { syncLivePresence } from './ui/live-status.js?v=live-presence-20261104-1';
+import {
+  updateReportsCommentary,
+  syncReportsDock,
+  syncReportSharing,
+} from './ui/reports.js?v=compact-panels-20261105-1';
 import { createNpcController } from './controllers/npcs.js';
 import { TutorialSession, createTutorialProgress } from './tutorial.js';
 import {
@@ -283,6 +289,7 @@ const state = {
   watch: null,
   liveShareId: null,
   liveStatus: '',
+  livePresence: 'unknown',
   watchNPC: false,
 };
 let tutorial = null,
@@ -411,6 +418,7 @@ function watchLiveGame(id) {
   stopLiveWatch = null;
   const request = ++liveRequest;
   state.liveStatus = 'connecting';
+  state.livePresence = 'unknown';
   if (!cloud?.spectators) {
     if (!cloudEnabled) state.liveStatus = 'unavailable';
     render();
@@ -438,6 +446,11 @@ function watchLiveGame(id) {
         state.watch = null;
         state.liveStatus = 'unavailable';
         render();
+      },
+      (presence) => {
+        if (request !== liveRequest || state.livePresence === presence) return;
+        state.livePresence = presence;
+        syncLivePresence(app, presence);
       },
     );
   } catch {
@@ -486,6 +499,7 @@ function route() {
   if (!(view === 'history' && id === 'watch')) {
     state.liveShareId = null;
     state.liveStatus = '';
+    state.livePresence = 'unknown';
   }
   if (view === 'tutorial') {
     document.getElementById('help-dialog').close();
@@ -618,6 +632,7 @@ function render({ tutorialAction } = {}) {
                         : welcome();
   // innerHTML replaced the elements; observers and animation mounts must attach to the new DOM.
   syncReportsDock(app);
+  syncLivePresence(app, state.livePresence);
   syncMapLabels(app);
   welcomeDemo.mount(app, { reducedMotion: motionDirector.reducedMotion });
   const diceFrame = setupFrame || motionFrame;
@@ -659,13 +674,22 @@ function render({ tutorialAction } = {}) {
   syncNicknameControls();
   restoreFocus(app, focusedControl);
   tutorialPresentation.mount(app, { reducedMotion: motionDirector.reducedMotion });
+  syncPlayingPresence();
   document.title =
     state.view === 'game' && g
       ? `${g.name} — Meridian Conquest`
       : 'Meridian Conquest — Your world. Your next move.';
 }
 
-/** Publish an opt-in live copy for owners; preserve offline snapshot sharing. */
+/** Only a shared campaign actively open in its owner's browser sends presence heartbeats. */
+function syncPlayingPresence() {
+  const game = currentGame();
+  const playing =
+    navigator.onLine && cloudReady && state.view === 'game' && !state.watch && !state.liveShareId;
+  cloud?.spectators?.setPlayingGame?.(playing && game ? game.id : null);
+}
+
+/** Share finished gameplay as a public snapshot; only ongoing campaigns start a live stream. */
 async function shareGame(g) {
   if (!g) return;
   if (cloud?.user && !campaignController.isReady(g)) {
@@ -674,30 +698,36 @@ async function shareGame(g) {
       throw new Error('Load this campaign before sharing it.');
     g = loaded;
   }
-  let live = Boolean(state.liveShareId);
+  const completed = Number.isInteger(g.winner);
+  let live = !completed && Boolean(state.liveShareId);
   // Publish only after the private save succeeds; copying a URL alone does not grant write access.
-  if (cloud?.user && cloudReady && !state.watch) {
+  if (!completed && cloud?.user && cloudReady && !state.watch) {
     await cloud.save([g]);
     await cloud.spectators.start(g);
     live = true;
     if (state.view === 'campaigns') render();
+    else syncReportSharing(app, cloud.spectators);
   }
   const url = /* prettier-ignore */ `${location.origin}${location.pathname}#${
     live
       ? 'live/' + (state.liveShareId || g.id)
-      : 'watch/' + encodeSnapshot(g)
+      : 'watch/' + encodeSnapshot(JSON.parse(spectatorPayload(g)))
   }`;
   try {
     await navigator.clipboard.writeText(url);
     notify(
       live
         ? 'Live spectator link copied. Visitors can watch without signing in.'
-        : 'Read-only campaign snapshot copied.',
+        : completed
+          ? 'Gameplay link copied. Visitors can view the recorded game.'
+          : 'Read-only campaign snapshot copied.',
     );
   } catch {
     const dialog = document.getElementById('help-dialog');
     dialog.innerHTML = /* prettier-ignore */ `<div class="help-head"
-        ><h2 id="help-title">${live ? 'Share this live game' : 'Share this campaign snapshot'}</h2
+        ><h2 id="help-title">${
+          live ? 'Share this live game' : completed ? 'Share gameplay' : 'Share this campaign snapshot'
+        }</h2
         ><button class="icon-button" data-action="close-help" aria-label="Close share dialog"
           >${renderIcon('close')}</button
         ></div
@@ -706,14 +736,17 @@ async function shareGame(g) {
           >${
             live
               ? 'Anyone with this link can watch updates. Only you can make moves. Use Stop' +
-                ' sharing on the campaign card to revoke access.'
-              : 'Copy this read-only snapshot link. It preserves the current position and recorded events.'
+                ' sharing in the reports header or on the campaign card to revoke access.'
+              : completed
+                ? 'Copy this completed gameplay link. Visitors can view the final board' +
+                  ' and replay its recorded recent events.'
+                : 'Copy this read-only snapshot link. It preserves the current position and recorded events.'
           }</p
         ><textarea
           class="field"
           style="height:100px"
           readonly
-          aria-label="${live ? 'Live spectator URL' : 'Snapshot URL'}"
+          aria-label="${live ? 'Live spectator URL' : completed ? 'Gameplay URL' : 'Snapshot URL'}"
         >
 ${escapeHTML(url)}</textarea>
       </div>`;
@@ -742,10 +775,14 @@ motionPreference.addEventListener('change', (event) => {
 });
 bindAppEvents(viewContext);
 window.addEventListener('hashchange', route);
-window.addEventListener('offline', () =>
-  notify('You are offline. The loaded demo and local saves remain available.'),
-);
-window.addEventListener('online', () => notify('Connection restored.'));
+window.addEventListener('offline', () => {
+  syncPlayingPresence();
+  notify('You are offline. The loaded demo and local saves remain available.');
+});
+window.addEventListener('online', () => {
+  syncPlayingPresence();
+  notify('Connection restored.');
+});
 document.getElementById('help-dialog').addEventListener('click', (event) => {
   if (event.target === event.currentTarget) event.currentTarget.close();
 });

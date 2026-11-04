@@ -50,9 +50,26 @@ The share icon on a signed-in campaign publishes a public gameplay copy under `l
 
 The public projection contains the board, commander nicknames, battle state and up to 60 recent events with available commentary. It explicitly selects gameplay fields and excludes account email addresses, credentials and unrelated custom metadata. Stable event IDs preserve animation timing across updates. Visitors never request Gemini commentary or run bot turns. New reports from the owner update the shared feed without restarting dice animations. The owner must keep the game open to continue play; there is no background game server.
 
-**Stop sharing** deletes only the public copy and makes its live link unavailable. The private campaign and full history are preserved. Existing embedded `#watch/` snapshots continue to work. Multiplayer rooms are unchanged. Each published update adds a Firestore write and visitor reads within Spark quotas; no Functions or billing upgrade is required. Public use requires the frontend, Firestore rules and the `liveGames.payload` index exemption to be deployed; a localhost URL cannot be opened from a friend's device.
+**Stop sharing** deletes only the public copy and makes its live link unavailable. The private campaign and full history are preserved. Completed campaigns use **Share gameplay**, which creates an embedded `#watch/` snapshot of the public final board and up to 60 recent events with saved commentary. Copying a completed recording does not start live publication or write to Firestore. Recorded links contain a standalone copy and cannot be revoked; **Stop live sharing** remains available to revoke any previously published live link. Multiplayer rooms are unchanged. Each published live update adds a Firestore write and visitor reads within Spark quotas; no Functions or billing upgrade is required. Public use requires the frontend, Firestore rules and the `liveGames.payload` index exemption to be deployed; a localhost URL cannot be opened from a friend's device.
 
-Offline checks include `tests/spectators.test.js`, `scripts/spectator-browser-test.mjs`, and the isolated emulator's public-read/owner-write security tests. They do not create real accounts or publish real campaigns.
+The local presence feature adds owner-written records under
+`liveGames/{gameId}/presence/{sessionId}`. While an explicitly shared campaign is open,
+its tab sends a heartbeat every 30 seconds. Leaving the game, signing out or a successful
+page-exit update marks that tab offline. Visitors see **The player has left the game**
+above the retained board; returning clears the notice. Switching browser tabs alone
+does not mark the player as gone, and another active owner tab keeps the stream online.
+
+Browsers do not reliably deliver [page-exit events](https://developer.mozilla.org/en-US/docs/Web/API/Window/pagehide_event).
+A missing heartbeat expires after 75 seconds, checked every five seconds, so an abrupt
+close or lost connection can take about 80 seconds to show. Each active shared tab adds
+about two Firestore writes per minute, plus visitor reads, within the existing Spark quota.
+Presence never grants visitors gameplay writes or exposes account credentials.
+
+Publish the updated presence rules and frontend together to activate these notices on
+the public site. Older rules or clients retain the existing spectator view without presence.
+Offline checks include `tests/spectators.test.js`, `tests/live-presence.test.js`,
+`scripts/spectator-browser-test.mjs`, and the isolated emulator's public-read/owner-write
+security tests. They do not create real accounts or publish real campaigns.
 
 ## Gemini configuration
 
@@ -94,7 +111,7 @@ Entering a campaign or hosted multiplayer match prepares model setup, cached sig
 
 The report panel has **Field reports** and **AI commentary** tabs in campaigns and multiplayer. Factual events remain in Field reports; generated text, queue/error status and the optional Generate commentary control are in AI commentary. Switching tabs does not generate a request or alter the campaign. The active tab persists across game updates. Incoming reports update only the commentary list, preserving active inputs and dice animations, and hidden results still wait until the dice settle. The AI tab selects recent generated reports independently of the factual log's latest-event window, so quiet or skipped phases do not immediately push existing commentary out of view.
 
-**Pin reports** optionally fixes the existing panel to the bottom of the screen within its map column. While expanded, the map scales proportionally to fit above the dock, with readable labels; shorter windows use a shorter report panel. Explicitly pinning or expanding brings the map into view when needed. Its arrow collapses or expands the content; selecting either tab also expands it. Collapsing or unpinning restores the map's original size, and **Unpin** restores the panel's original placement. Pin and collapse choices stay in UI memory across game renders and never enter saved campaign or room records. The panel reserves its measured height below the page so controls can scroll clear of it, follows column size changes and releases that space when unpinned or leaving gameplay. Incoming AI reports do not reopen a collapsed panel, change its selected tab or move the page.
+**Pin reports** bounds the report panel's height and scales the map proportionally to fit above it, with readable labels. The reports stay 12 pixels below the map and scroll with it. Explicitly pinning or expanding brings the map into view when needed. Its arrow collapses or expands the content; selecting either tab also expands it. Collapsing or unpinning restores the map's original size. Pin and collapse choices stay in UI memory across game renders and never enter saved campaign or room records. Incoming AI reports do not reopen a collapsed panel, change its selected tab or move the page. For signed-in campaign owners, **Share live link** and **Stop sharing** reuse the campaign-card sharing actions directly from this header. Sharing changes update those controls without rebuilding the board or restarting dice.
 
 New reports use impartial, third-person play-by-play for the whole match, including bot-versus-bot battles. The narrator calls the action between the countries and commanders involved, adds its immediate consequence and mentions the overall lead when that event changes it. It must not address the viewer, give advice or invent soccer mechanics. Battle context names both the attacker and the original defender from the attack snapshot, preserving their identities after conquest changes ownership. Saved nicknames remain unchanged; legacy "You" labels become neutral commander names only in AI context. Previously saved reports retain their original wording.
 

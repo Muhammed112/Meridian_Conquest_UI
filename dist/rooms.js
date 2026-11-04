@@ -38,7 +38,8 @@ export function normalizeRoomCode(value) {
   return code;
 }
 const playerName = (user) => playerNickname(user.displayName);
-const roomPlayerNames = (room) =>
+/** Use identical commander names in the opening preview and the saved multiplayer board. */
+export const roomPlayerNames = (room) =>
   Array.from(
     { length: ROOM_CAPACITY },
     (_, seat) =>

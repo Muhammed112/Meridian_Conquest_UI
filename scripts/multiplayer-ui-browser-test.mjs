@@ -8,6 +8,7 @@ import {
   newRoom,
   joinRoom,
   roomRecord,
+  readRoomGame,
   chooseRoomCountry,
   prepareRoomRolls,
   rollRoomInitiative,
@@ -110,6 +111,35 @@ async function openPlayer(uid, viewport) {
   await page.locator('[data-room-form="create"]').waitFor();
   return page;
 }
+
+/** Every member sees the same resolved order, including bots, before the host starts the match. */
+async function checkOpeningOrder(page, initiative) {
+  const preview = page.locator('[data-opening-turn-order]');
+  await preview.waitFor();
+  const items = await preview.locator('li[data-opening-player]').evaluateAll((items) =>
+    items.map((item) => ({
+      player: item.dataset.openingPlayer,
+      seat: Number(item.dataset.openingSeat),
+    })),
+  );
+  const firstSeat = initiative.players.indexOf(initiative.winner);
+  const expectedSeats = Array.from({ length: 10 }, (_, index) => (firstSeat + index) % 10);
+  assert.deepEqual(
+    items.map((item) => item.player),
+    expectedSeats.map((seat) => initiative.players[seat]),
+    'The multiplayer preview must include both people and all eight bots in game turn order.',
+  );
+  assert.deepEqual(
+    items.map((item) => item.seat),
+    expectedSeats,
+  );
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+    'The complete turn order must not widen either player’s page.',
+  );
+  return expectedSeats;
+}
 try {
   browser = await chromium.launch({ headless: true });
   const host = await openPlayer('host', { width: 1440, height: 1000 });
@@ -172,12 +202,21 @@ try {
   assert.equal(await friend.locator('#room-country-options option[label="JP"]').count(), 1);
   await host.screenshot({ path: '.firebase/multiplayer-one-bar.png', fullPage: true });
   await host.locator('[data-room-action="prepare"]').click();
+  assert.equal(await host.locator('[data-opening-turn-order]').count(), 0);
   await host.locator('[data-room-action="opening-roll"]').click();
+  assert.equal(await host.locator('[data-opening-turn-order]').count(), 0);
   await friend.reload();
+  assert.equal(await friend.locator('[data-opening-turn-order]').count(), 0);
   await friend.locator('[data-room-action="opening-roll"]').click();
+  await host.locator('[data-room-action="reroll"]').waitFor();
+  assert.equal(await host.locator('[data-opening-turn-order]').count(), 0);
+  assert.equal(await friend.locator('[data-opening-turn-order]').count(), 0);
   await host.locator('[data-room-action="reroll"]').click();
   await host.locator('[data-room-action="opening-roll"]').click();
+  assert.equal(await host.locator('[data-opening-turn-order]').count(), 0);
   await friend.locator('[data-room-action="opening-roll"]').click();
+  const expectedOrder = await checkOpeningOrder(host, room.initiative);
+  await checkOpeningOrder(friend, room.initiative);
   await host.locator('[data-room-action="start"]').click();
   for (const page of [host, friend]) {
     await page.locator('.board-grid .roster-panel').waitFor();
@@ -185,6 +224,11 @@ try {
     assert.equal(await page.locator('.action-panel').count(), 1);
     assert.equal(await page.locator('[role="tab"]').count(), 2);
   }
+  assert.deepEqual(
+    readRoomGame(room).order,
+    expectedOrder,
+    'The room must start in its displayed order.',
+  );
   assert.equal(await friend.locator('#attack-from').inputValue(), 'JP');
   assert.equal(await host.locator('[data-action="start-attack"]').count(), 0);
   await friend.locator('.country-row[data-code="ZA"]').click();
@@ -207,7 +251,7 @@ try {
     await friend.screenshot({ path: '.firebase/multiplayer-shared-mobile.png', fullPage: true });
   }
   console.log(
-    'PASS: one-bar country search, reservations, validation, reload, opening ties, shared controls and dice.',
+    'PASS: country search, reservations, opening ties, full turn-order previews, shared controls and dice.',
   );
 } finally {
   await browser?.close();

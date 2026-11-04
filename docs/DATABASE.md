@@ -20,16 +20,17 @@ erDiagram
 The relationships describe document ownership and references rather than SQL
 joins or foreign-key constraints.
 
-| Path                                 | Stored data                                                                  | Access                                                 |
-| ------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `users/{uid}/games/{gameId}`         | Typed board, display fields, legacy payload and save metadata                | Signed-in owner                                        |
-| `…/events/{eventId}`                 | Sequence, typed factual event, previous-event link and legacy context        | Owner reads and creates; existing facts are immutable  |
-| `…/aiReportsV2/{eventId}`            | Event reference, generated text, model, version, author and server timestamp | Owner reads and creates once                           |
-| `rooms/{code}`                       | Members, country reservations, opening dice and current shared board         | Signed-in invitation-code access; controlled updates   |
-| `rooms/{code}/events/{eventId}`      | Immutable move facts                                                         | Members read; current controller commits               |
-| `rooms/{code}/aiReportsV2/{eventId}` | Shared commentary                                                            | Members read; host creates once                        |
-| `liveGames/{gameId}`                 | Allowlisted, bounded public gameplay copy                                    | Visitors read a known link; owner publishes or revokes |
-| `publicData/populations`             | Validated reference snapshot                                                 | Public read; dedicated updater writes                  |
+| Path                                      | Stored data                                                                  | Access                                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `users/{uid}/games/{gameId}`              | Typed board, display fields, legacy payload and save metadata                | Signed-in owner                                        |
+| `…/events/{eventId}`                      | Sequence, typed factual event, previous-event link and legacy context        | Owner reads and creates; existing facts are immutable  |
+| `…/aiReportsV2/{eventId}`                 | Event reference, generated text, model, version, author and server timestamp | Owner reads and creates once                           |
+| `rooms/{code}`                            | Members, country reservations, opening dice and current shared board         | Signed-in invitation-code access; controlled updates   |
+| `rooms/{code}/events/{eventId}`           | Immutable move facts                                                         | Members read; current controller commits               |
+| `rooms/{code}/aiReportsV2/{eventId}`      | Shared commentary                                                            | Members read; host creates once                        |
+| `liveGames/{gameId}`                      | Allowlisted, bounded public gameplay copy                                    | Visitors read a known link; owner publishes or revokes |
+| `liveGames/{gameId}/presence/{sessionId}` | Per-tab online flag, owner ID and server heartbeat time                      | Visitors read while shared; owner writes               |
+| `publicData/populations`                  | Validated reference snapshot                                                 | Public read; dedicated updater writes                  |
 
 ## Board and event fields
 

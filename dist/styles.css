@@ -1014,6 +1014,43 @@ label.field-label {
   width: 4px;
   height: 4px;
 }
+/* Compact numbered chips preview the complete lineup without repeating the opening dice table. */
+.opening-turn-order {
+  margin-top: 14px;
+}
+.opening-turn-order .caption {
+  margin-bottom: 8px;
+}
+.opening-turn-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.opening-turn-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.opening-turn-list .opening-first-turn {
+  border-color: var(--gold);
+}
+.opening-turn-number {
+  color: var(--gold-light);
+  font-family: var(--mono);
+}
+.opening-turn-list .country-flag {
+  width: 18px;
+  height: 13px;
+}
 .setup-launch {
   display: flex;
   justify-content: space-between;
@@ -1347,24 +1384,8 @@ label.field-label {
   bottom: 10px;
   left: 15px;
 }
-.board-actions {
-  display: flex;
-  gap: 7px;
-  padding: 14px 0;
-  flex-wrap: wrap;
-}
-.board-actions .btn {
-  font-size: 11px;
-  padding: 8px 12px;
-  min-height: 38px;
-}
-/* Reserve a square control beside Skip turn while keeping Rules aligned at the far edge. */
-.board-actions .copy-live-link {
-  flex: 0 0 38px;
-  padding: 8px;
-}
-.board-actions .btn:last-child {
-  margin-left: auto;
+.map-and-activity > .reports-panel {
+  margin-top: 12px;
 }
 .activity-head {
   display: flex;
@@ -1380,16 +1401,9 @@ label.field-label {
   flex-wrap: wrap;
   gap: 12px;
 }
-html.reports-docked body {
-  padding-bottom: var(--reports-dock-height, 0px);
-}
-/* Dock geometry is measured by ui/reports.js; body padding reserves space below the page. */
+/* Keep pinned reports attached below the map so the whole board scrolls together. */
 .reports-panel.is-pinned {
-  position: fixed;
-  left: var(--reports-dock-left, 12px);
-  bottom: max(12px, env(safe-area-inset-bottom));
-  width: var(--reports-dock-width, calc(100% - 24px));
-  z-index: 25;
+  position: static;
   height: min(320px, 36dvh);
   display: flex;
   flex-direction: column;
@@ -1518,7 +1532,7 @@ html.reports-docked body {
 }
 /* The current phase stays reachable beside the map; breakpoints below handle stacked layouts. */
 .action-panel {
-  padding: 20px;
+  padding: 16px;
   min-height: 340px;
 }
 .action-panel .eyebrow {
@@ -1536,7 +1550,7 @@ html.reports-docked body {
   margin: 12px 0 18px;
 }
 .action-panel .field-group {
-  margin: 15px 0;
+  margin: 12px 0;
 }
 .action-panel .field {
   font-size: 12px;
@@ -1546,7 +1560,7 @@ html.reports-docked body {
   font-size: 11px;
 }
 .action-panel > .btn {
-  margin-top: 9px;
+  margin-top: 6px;
 }
 .panel-divider {
   height: 1px;
@@ -1986,7 +2000,7 @@ dialog::backdrop {
     padding: 0 20px;
   }
   .action-panel {
-    padding: 17px;
+    padding: 16px;
   }
   .game-theatre .world-map {
     min-height: 230px;
@@ -2381,9 +2395,6 @@ dialog::backdrop {
   .watch-notice {
     font-size: 11px;
   }
-  .board-actions .btn {
-    min-height: 40px;
-  }
 }
 @media (max-width: 480px) {
   .shell {
@@ -2686,7 +2697,8 @@ html[data-motion='reduced'] *:after {
   }
 }
 
-.commentary-actions {
+.commentary-actions,
+.report-sharing {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2698,4 +2710,17 @@ html[data-motion='reduced'] *:after {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
+}
+.live-player-notice {
+  display: block;
+  margin-top: 8px;
+  color: var(--gold-light);
+  font-weight: 500;
+}
+.live-player-notice[hidden] {
+  display: none;
+}
+.badge.live.is-offline {
+  color: var(--gold-light);
+  border-color: var(--gold);
 }

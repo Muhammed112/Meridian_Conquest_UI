@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { GameEngine } from '../dist/engine.js';
 import { encodeSnapshot, decodeSnapshot } from '../dist/snapshots.js';
 import { findCountry } from '../dist/data.js';
+import { spectatorPayload } from '../dist/spectators.js';
 
 // Previously shared links must remain readable and preserve non-ASCII campaign names and player
 // nicknames.
@@ -25,6 +26,34 @@ test('shared snapshots preserve Unicode and remain compatible with existing URL 
   assert.match(encoded, /^[\w-]+$/);
   for (const invalid of [null, 123, '', 'a'.repeat(180001), '%%%'])
     assert.throws(() => decodeSnapshot(invalid));
+});
+
+// Completed sharing must retain recorded narration and the final result without exposing private metadata.
+test('completed gameplay snapshots keep public results and commentary without private fields', () => {
+  const game = GameEngine.create('Recorded campaign', 'ZA', true);
+  game.countries.forEach((country) => {
+    country.owner = 0;
+  });
+  game.winner = 0;
+  game.status = 'won';
+  game.privateNote = 'Private account information';
+  new GameEngine(game).event('victory', 'One commander controls all ten countries.');
+  game.events.at(-1).commentary = 'The final country falls as the commander secures the world.';
+  game.events.at(-1).privateNote = game.privateNote;
+
+  const publicGame = JSON.parse(spectatorPayload(game));
+  const restored = decodeSnapshot(encodeSnapshot(publicGame));
+  assert.equal(restored.winner, 0);
+  assert.equal(restored.status, 'won');
+  assert.ok(restored.countries.every((country) => country.owner === 0));
+  assert.equal(restored.events.at(-1).commentary, game.events.at(-1).commentary);
+  assert.equal(restored.privateNote, undefined);
+  assert.equal(restored.events.at(-1).privateNote, undefined);
+  assert.equal(
+    game.privateNote,
+    'Private account information',
+    'Sharing must leave the save intact.',
+  );
 });
 
 // A previously shared link must remain usable with consistent country references and original armies.

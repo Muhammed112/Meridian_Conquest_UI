@@ -114,7 +114,19 @@ An operator signed in with the Firebase CLI can run `npm run populations:publish
 
 Game rules and dice execute in the browser to keep Firebase Spark free. Multiplayer validates room membership, turn ownership, revisions, structured board fields and immutable starting-country data. It cannot prove that a participant generated fair random dice: fully authoritative competitive play requires a trusted server. Live spectator links apply to shared single-player campaigns; multiplayer rooms retain their existing member-only permissions.
 
-Use the share icon on a campaign card to copy a live viewing link. Visitors need no account and see the board, recent field reports and available AI commentary update as the owner plays. Only the signed-in owner can play turns or publish changes. **Stop sharing** on the campaign card revokes the link. Private campaigns remain owner-only; sharing publishes an explicit gameplay copy under `liveGames`, without email addresses or account credentials. The recent history is bounded to 60 events, while the owner's complete private history is retained. The owner must keep the game open for play to continue; closing it leaves the last published position visible. Deploy the frontend, Firestore rules and index exemptions together to enable this feature on the public site. A localhost link is accessible only on that computer.
+Use **Share live link** in the reports header, or the share icon on a campaign card, to copy a live viewing link. Visitors need no account and see the board, recent field reports and available AI commentary update as the owner plays. Only the signed-in owner can play turns or publish changes. **Stop sharing** in either location revokes the link. Private campaigns remain owner-only; sharing publishes an explicit gameplay copy under `liveGames`, without email addresses or account credentials. The recent history is bounded to 60 events, while the owner's complete private history is retained. The owner must keep the game open for play to continue; closing it leaves the last published position visible. Deploy the frontend, Firestore rules and index exemptions together to enable this feature on the public site. A localhost link is accessible only on that computer.
+
+Completed campaigns use **Share gameplay** to copy a recorded `#watch/` link instead
+of starting a live stream. It includes the final board, up to 60 recent events and
+their saved commentary, and can be viewed after the owner leaves. These links
+contain a fixed copy and cannot be revoked. If a live link was shared earlier,
+**Stop live sharing** revokes that live link separately.
+
+Live-view presence shows **The player has left the game** above the retained board
+when the owner leaves, and clears it on return. An abrupt browser close or lost
+connection is detected within about 80 seconds through expiring heartbeats.
+Switching tabs alone does not mark the player offline. The new presence rules and
+frontend must be published together; see [presence setup](docs/FIREBASE.md#live-spectator-links).
 
 ## Firebase and AI commentary
 
@@ -136,6 +148,9 @@ After choosing your country and opponents, select **Roll my die**. All ten comma
 the highest result takes the first turn. **Roll tie-break** rerolls only the tied leaders.
 The dice use the gameplay rolling animation and reveal the result once they settle.
 Reduced motion shows results immediately.
+Once the winner is decided, a numbered **Turn order** preview shows all ten commanders
+with their country flags before starting. Turns follow seat order from the dice winner;
+the preview also appears in multiplayer after all rolls and tie-breaks are resolved.
 Select **Start campaign** once there is a winner. Changing countries or redrawing opponents
 resets the opening rolls; editing the campaign name or difficulty retains them. Existing
 campaigns keep their saved turn order.

@@ -3,7 +3,11 @@ import { cloudEnabled } from '../cloud.js?v=match-commentary-20261026-1';
 import { GameEngine } from '../engine.js';
 import { difficultyFor } from '../difficulty.js';
 import { normalizeNickname } from '../profile.js';
-import { selectReportTab, setReportsDock } from '../ui/reports.js';
+import {
+  selectReportTab,
+  setReportsDock,
+  syncReportSharing,
+} from '../ui/reports.js?v=compact-panels-20261105-1';
 import { applyBoardChoice } from './board-actions.js';
 import {
   createOpeningRolls,
@@ -127,7 +131,8 @@ export function bindAppEvents(context) {
       }
       if (action === 'stop-sharing') {
         await context.liveShares.stop(button.dataset.id);
-        context.render();
+        if (context.state.view === 'game') syncReportSharing(document, context.liveShares);
+        else context.render();
         context.notify('Live sharing stopped. The old link no longer shows your game.');
         return;
       }

@@ -147,8 +147,8 @@ test('the roster groups owners by country count and preserves each country row',
   assert.equal(state.selected, game.countries[3].code);
 });
 
-/** Render diplomacy against real engine state without requiring browser or cloud services. */
-function diplomacyView(game, state, { seat = 0, nameOf = (player) => `Commander ${player}` } = {}) {
+/** Render the action panel against real engine state without browser or cloud services. */
+function boardView(game, state, { seat = 0, nameOf = (player) => `Commander ${player}` } = {}) {
   const { gameView } = createBattleViews({
     state,
     motionFrame: null,
@@ -161,6 +161,87 @@ function diplomacyView(game, state, { seat = 0, nameOf = (player) => `Commander 
     campaignPopulationLabel: () => '',
   });
   return gameView(game);
+}
+
+// Save header space for owner controls while keeping the viewing mode clear to spectators.
+test('report badges identify live and recorded viewers without a decorative owner badge', () => {
+  const game = GameEngine.create('Report badge check', 'ZA', true);
+  const state = { view: 'game', allocations: {}, reportDock: {} };
+  assert.doesNotMatch(boardView(game, state), /Campaign log/);
+
+  state.watch = true;
+  assert.match(boardView(game, state), /class="badge live"[^>]*>Recorded<\/span>/);
+  state.liveShareId = game.id;
+  assert.match(boardView(game, state), /data-live-presence-badge[^>]*>Live view<\/span>/);
+});
+
+/** Give the local player two countries so the view can offer a legal transfer destination. */
+function transferFixture(mode) {
+  const game = GameEngine.create('Transfer controls', 'ZA', true);
+  const seat = mode === 'multiplayer' ? 1 : 0;
+  game.mode = mode;
+  game.countries[0].owner = seat;
+  game.countries[1].owner = seat;
+  game.countries[0].army = 5;
+  game.position = game.order.indexOf(seat);
+  game.budget = 0;
+  return {
+    game,
+    state: { view: mode === 'multiplayer' ? mode : 'game', allocations: {}, reportDock: {} },
+    seat,
+  };
+}
+
+for (const mode of ['single-player', 'multiplayer']) {
+  // Removing the map toolbar must not strand players who can transfer before or after an attack.
+  test(`${mode} planning and completed battles retain one transfer entry in the action panel`, () => {
+    const { game, state, seat } = transferFixture(mode);
+    for (const outcome of [null, 'held', 'stopped', 'conquest']) {
+      game.lastBattle = outcome
+        ? { outcome, pairs: [], country: game.countries[1].name, reward: 2 }
+        : null;
+      const original = structuredClone(game);
+      const markup = boardView(game, state, { seat });
+      const transferButtons = [...markup.matchAll(/data-action="transfer"/g)];
+      assert.equal(transferButtons.length, 1, outcome || 'planning');
+      assert.match(markup, /class="panel action-panel"[\s\S]*data-action="transfer"/);
+      assert.doesNotMatch(markup, /class="board-actions"/);
+      assert.deepEqual(game, original, 'Showing the transfer action must not modify the game.');
+    }
+  });
+
+  // Transfer availability must follow the same ownership, phase and read-only guards as other moves.
+  test(`${mode} transfer entry stays hidden when the viewer cannot make a transfer`, () => {
+    const unavailableCases = [
+      ['another turn', (game) => (game.position = game.order.indexOf(2))],
+      ['reinforcements pending', (game) => (game.budget = 2)],
+      [
+        'battle in progress',
+        (game) => {
+          const enemy = game.countries.find(
+            (country) => country.owner !== new GameEngine(game).current,
+          );
+          new GameEngine(game).startAttack(game.countries[0].code, enemy.code);
+        },
+      ],
+      ['spectator', (_game, state) => (state.watch = true)],
+      ['finished game', (game) => (game.winner = 0)],
+      [
+        'only one country',
+        (game) => {
+          const local = new GameEngine(game).current;
+          game.countries.slice(1).forEach((country) => {
+            if (country.owner === local) country.owner = 2;
+          });
+        },
+      ],
+    ];
+    for (const [reason, prepare] of unavailableCases) {
+      const { game, state, seat } = transferFixture(mode);
+      prepare(game, state);
+      assert.doesNotMatch(boardView(game, state, { seat }), /data-action="transfer"/, reason);
+    }
+  });
 }
 
 /** An accepted pact between two smaller commanders, with a stronger outside rival. */
@@ -185,28 +266,28 @@ test('diplomacy controls are available only during a human turn with an NPC to n
   game.budget = 0;
   game.position = game.order.indexOf(0);
   const state = { view: 'game', action: 'diplomacy', allocations: {}, reportDock: {} };
-  const initial = diplomacyView(game, state);
+  const initial = boardView(game, state);
   assert.match(initial, /id="diplomacy-target"/);
   assert.match(initial, /data-action="propose-alliance"/);
   assert.equal([...initial.matchAll(/class="[^"]*\baction-panel\b/g)].length, 1);
 
   state.watch = true;
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
   state.watch = false;
   state.view = 'tutorial';
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
   state.view = 'game';
   game.budget = 2;
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
   game.budget = 0;
   game.position = game.order.indexOf(1);
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
   game.position = game.order.indexOf(0);
   new GameEngine(game).startAttack(game.countries[0].code, game.countries[1].code);
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
   game.battle = null;
   game.winner = 0;
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
 
   // Human friends cannot receive an automatic NPC response when only human-owned countries remain.
   game.winner = null;
@@ -215,7 +296,7 @@ test('diplomacy controls are available only during a human turn with an NPC to n
     country.owner = index % 2;
   });
   state.view = 'multiplayer';
-  assert.doesNotMatch(diplomacyView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
+  assert.doesNotMatch(boardView(game, state), /id="diplomacy-target"|data-action="diplomacy"/);
 });
 
 // An alliance warns about betrayal but must preserve the ordinary ability to choose any rival target.
@@ -229,7 +310,7 @@ test('allied countries remain target options and the pact appears in the same ac
     reportDock: {},
   };
   const original = structuredClone(game);
-  const planning = diplomacyView(game, state);
+  const planning = boardView(game, state);
   assert.match(planning, /class="alliance-warning"/);
   assert.match(planning, /breaks your pact/);
   assert.match(
@@ -239,7 +320,7 @@ test('allied countries remain target options and the pact appears in the same ac
   assert.match(planning, /data-action="start-attack"/);
 
   state.action = 'diplomacy';
-  const diplomacy = diplomacyView(game, state);
+  const diplomacy = boardView(game, state);
   assert.match(diplomacy, /class="diplomacy-pact"/);
   assert.match(diplomacy, /Commander 1/);
   assert.match(diplomacy, /3 rounds remaining/);
@@ -257,7 +338,7 @@ test('only the allied roster group has a named header and a remaining-rounds bad
   const game = alliedGame();
   const state = { view: 'game', allocations: {}, reportDock: {} };
   const original = structuredClone(game);
-  const markup = diplomacyView(game, state, { seat: 1 });
+  const markup = boardView(game, state, { seat: 1 });
   const groupHeaders = [
     ...markup.matchAll(/aria-label="Player (\d+) countries"([\s\S]*?)(?=<button)/g),
   ];
@@ -279,13 +360,13 @@ test('only the allied roster group has a named header and a remaining-rounds bad
   assert.deepEqual(game, original, 'Rendering a badge must not modify the game.');
 
   // The app's nameOf callback already escapes commander names before returning markup.
-  const escaped = diplomacyView(game, state, { nameOf: () => '&lt;Commander &amp; Ally&gt;' });
+  const escaped = boardView(game, state, { nameOf: () => '&lt;Commander &amp; Ally&gt;' });
   const header = escaped.match(/class="country-owner-group-head"([\s\S]*?)(?=<button)/)[1];
   assert.match(header, /&lt;Commander &amp; Ally&gt;/);
   assert.doesNotMatch(header, /<Commander/);
   game.round = 3;
   assert.match(
-    diplomacyView(game, state),
+    boardView(game, state),
     /class="badge gold ally-badge"[^>]*title="1 round remaining"/,
   );
 });
@@ -295,7 +376,7 @@ test('the roster ally badge disappears on expiry, betrayal and elimination', () 
   const state = { view: 'game', allocations: {}, reportDock: {} };
   for (const ending of ['expiry', 'betrayal', 'elimination']) {
     const game = alliedGame();
-    assert.match(diplomacyView(game, state), /ally-badge/);
+    assert.match(boardView(game, state), /ally-badge/);
     if (ending === 'expiry') game.round = 4;
     if (ending === 'betrayal')
       new GameEngine(game).startAttack(game.countries[0].code, game.countries[2].code);
@@ -303,7 +384,7 @@ test('the roster ally badge disappears on expiry, betrayal and elimination', () 
       game.countries.forEach((country) => {
         if (country.owner === 1) country.owner = 2;
       });
-    assert.doesNotMatch(diplomacyView(game, state), /ally-badge|country-owner-group-head/, ending);
+    assert.doesNotMatch(boardView(game, state), /ally-badge|country-owner-group-head/, ending);
   }
 });
 
@@ -320,17 +401,14 @@ test('multiplayer roster ally badges are relative to the viewer rather than the 
   game.budget = 0;
   game.position = game.order.indexOf(1);
   const state = { view: 'multiplayer', allocations: {}, reportDock: {} };
-  assert.doesNotMatch(diplomacyView(game, state, { seat: 1 }), /ally-badge/);
+  assert.doesNotMatch(boardView(game, state, { seat: 1 }), /ally-badge/);
   assert.equal(new GameEngine(game).proposeAlliance(2, { humanCount: 2 }).accepted, true);
 
-  const friendMarkup = diplomacyView(game, state, { seat: 1 });
+  const friendMarkup = boardView(game, state, { seat: 1 });
   const allyHeader = friendMarkup.match(/aria-label="Player 3 countries"([\s\S]*?)(?=<button)/)[1];
   assert.match(allyHeader, /country-owner-group-head/);
   assert.match(allyHeader, /Commander 2/);
   assert.match(allyHeader, /class="badge gold ally-badge"[^>]*title="3 rounds remaining"/);
   assert.equal([...friendMarkup.matchAll(/class="badge gold ally-badge"/g)].length, 1);
-  assert.doesNotMatch(
-    diplomacyView(game, state, { seat: 0 }),
-    /ally-badge|country-owner-group-head/,
-  );
+  assert.doesNotMatch(boardView(game, state, { seat: 0 }), /ally-badge|country-owner-group-head/);
 });

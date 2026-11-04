@@ -3,37 +3,51 @@ import assert from 'node:assert/strict';
 import { chromium } from './lib/browser.mjs';
 import { startTestServer } from './lib/static-server.mjs';
 import { GameEngine } from '../dist/engine.js';
+import { decodeSnapshot } from '../dist/snapshots.js';
+import { spectatorPayload } from '../dist/spectators.js';
 
 // Keep the real spectator service, substituting only its Firestore transport with in-memory records.
-const fakeCloud =
-  `
+const fakeCloud = `
 import { createSpectatorService } from './spectators.js';
 export const cloudEnabled = true;
 export async function connectCloud(callbacks) {
-` +
-  `  const user = window.fixtureOwner ? { uid: 'owner', displayName: 'Mo',` +
-  ` email: 'private@example.invalid' } : null;
-` +
-  `  window.privateWrites = 0; window.aiRequests = 0;
+  const user = window.fixtureOwner
+    ? { uid: 'owner', displayName: 'Mo', email: 'private@example.invalid' } : null;
+  window.privateWrites = 0; window.aiRequests = 0;
+  let nextSubscription = 0;
+  const listeners = new Map();
+  const snapshot = (target, value) => typeof target === 'string'
+    ? { exists: () => Boolean(value), data: () => value }
+    : { docs: value.map(record => ({ id: record.id, data: () => record.data })) };
+  window.receiveLive = (subscription, value) => listeners.get(subscription)?.(value);
   const sdk = {
-    doc: (_, ...parts) => parts.join('/'), collection: (_, name) => name,
-    query: target => target, where: () => ({}), serverTimestamp: () => 1,
-` +
-  `    getDocs: async () => ({ docs: (await window.listShares()).map(record =>` +
-  ` ({ id: record.gameId, data: () => record })) }),
-` +
-  `    setDoc: (path, record) => window.publishShare(path, record),
+    doc: (_, ...parts) => parts.join('/'),
+    collection: (_, ...parts) => parts.join('/'),
+    query: (path, ...constraints) => ({ path, constraints }),
+    where: (field, operator, value) => ({ type: 'where', field, operator, value }),
+    orderBy: (field, direction = 'asc') => ({ type: 'order', field, direction }),
+    limit: count => ({ type: 'limit', count }),
+    serverTimestamp: () => Date.now(),
+    getDocs: async target => snapshot(target, await window.readShares(target)),
+    setDoc: (path, record) => {
+      if (path.includes('/presence/')) window.fixturePresenceOnline = record.online;
+      return window.publishShare(path, record);
+    },
     deleteDoc: path => window.removeShare(path),
-    onSnapshot: (path, receive, fail) => {
+    onSnapshot: (target, receive, fail) => {
+      const subscription = ++nextSubscription;
       let active = true;
-` +
-  `      window.receiveLive = record => { if (active) receive({ exists: () =>` +
-  ` Boolean(record), data: () => record }); };
-` +
-  `      window.subscribeShare(path).then(record =>` +
-  ` window.receiveLive(record)).catch(fail);
-` +
-  `      return () => { active = false; };
+      listeners.set(subscription, value => {
+        if (active) receive(snapshot(target, value));
+      });
+      window.subscribeShare(subscription, target).then(value => {
+        if (active) receive(snapshot(target, value));
+      }).catch(fail);
+      return () => {
+        active = false;
+        listeners.delete(subscription);
+        void window.unsubscribeShare(subscription);
+      };
     },
   };
   const spectators = createSpectatorService({ db: {}, sdk, getUser: () => user });
@@ -48,18 +62,13 @@ export async function connectCloud(callbacks) {
       window.lastSaved = games[0];
       for (const game of games) await spectators.publish(game);
     },
-` +
-  `    requestCommentary() { window.aiRequests++; return 0; },` +
-  ` setCommentaryEnabled() {},
-` +
-  `  };
+    requestCommentary() { window.aiRequests++; return 0; },
+    setCommentaryEnabled() {},
+  };
   window.fixtureService = service;
-` +
-  `  window.deliverCommentary = (game, event, text) =>` +
-  ` callbacks.onCommentary(game, event, { status: 'ready', text,` +
-  ` narrationVersion: 2 });
-` +
-  `  callbacks.onSession(user, user ? window.fixtureGames : [], true);
+  window.deliverCommentary = (game, event, text) =>
+    callbacks.onCommentary(game, event, { status: 'ready', text, narrationVersion: 2 });
+  callbacks.onSession(user, user ? window.fixtureGames : [], true);
   return service;
 }`;
 
@@ -76,8 +85,33 @@ const records = new Map(),
 const server = await startTestServer();
 let browser;
 const origin = 'http://localhost:' + server.address().port;
+
+/** Resolve collection filters locally so presence and board listeners stay independent. */
+function readRecords(target) {
+  if (typeof target === 'string') return records.get(target) || null;
+  let matches = [...records]
+    .filter(
+      ([path]) =>
+        path.startsWith(target.path + '/') &&
+        path.split('/').length === target.path.split('/').length + 1,
+    )
+    .map(([path, data]) => ({ id: path.split('/').at(-1), data }));
+  for (const constraint of target.constraints) {
+    if (constraint.type === 'where')
+      matches = matches.filter((record) => record.data[constraint.field] === constraint.value);
+    if (constraint.type === 'order')
+      matches.sort(
+        (left, right) =>
+          (left.data[constraint.field] - right.data[constraint.field]) *
+          (constraint.direction === 'desc' ? -1 : 1),
+      );
+    if (constraint.type === 'limit') matches = matches.slice(0, constraint.count);
+  }
+  return matches;
+}
+
 /** Connect an isolated owner/visitor browser to the shared in-memory document fixture. */
-async function openPage(owner, path, viewport) {
+async function openPage(owner, path, viewport, fixtureGame = game) {
   const context = await browser.newContext({ viewport, ignoreHTTPSErrors: true });
   const page = await context.newPage(),
     errors = [];
@@ -96,28 +130,42 @@ async function openPage(owner, path, viewport) {
         },
       });
     },
-    { owner, game },
+    { owner, game: fixtureGame },
   );
-  await page.exposeFunction('listShares', () => (owner ? [...records.values()] : []));
-  await page.exposeFunction('subscribeShare', (path) => {
-    watchers.set(page, path);
-    return records.get(path) || null;
+  const subscriptions = new Map();
+  watchers.set(page, subscriptions);
+  await page.exposeFunction('readShares', readRecords);
+  await page.exposeFunction('subscribeShare', (subscription, target) => {
+    subscriptions.set(subscription, target);
+    return readRecords(target);
   });
+  await page.exposeFunction('unsubscribeShare', (subscription) =>
+    subscriptions.delete(subscription),
+  );
   /** Deliver fixture snapshots to subscribed browser pages without contacting Firebase. */
-  async function notify(path, record) {
-    for (const [visitor, watched] of watchers)
-      if (watched === path && !visitor.isClosed())
-        await visitor.evaluate((value) => window.receiveLive(value), record || null);
+  async function notify(path) {
+    for (const [visitor, watched] of watchers) {
+      if (visitor.isClosed()) continue;
+      for (const [subscription, target] of watched) {
+        const matches =
+          typeof target === 'string' ? target === path : path.startsWith(target.path + '/');
+        if (matches)
+          await visitor.evaluate(
+            ({ subscription, value }) => window.receiveLive(subscription, value),
+            { subscription, value: readRecords(target) },
+          );
+      }
+    }
   }
   await page.exposeFunction('publishShare', async (path, record) => {
     assert.equal(owner, true);
     records.set(path, record);
-    await notify(path, record);
+    await notify(path);
   });
   await page.exposeFunction('removeShare', async (path) => {
     assert.equal(owner, true);
     records.delete(path);
-    await notify(path, null);
+    await notify(path);
   });
   await page.route(/\/cloud\.js(?:\?.*)?$/, (route) =>
     route.fulfill({ contentType: 'text/javascript', body: fakeCloud }),
@@ -131,15 +179,116 @@ async function openPage(owner, path, viewport) {
 
 try {
   browser = await chromium.launch({ headless: true });
-  const owner = await openPage(true, '/#game/' + game.id, { width: 1440, height: 1000 });
-  await owner.page.getByRole('button', { name: 'Copy live viewing link', exact: true }).click();
+  const owner = await openPage(true, '/#campaigns', { width: 1440, height: 1000 });
+  // Sharing remains available on campaign cards, while active players use the reports header.
+  assert.equal(
+    await owner.page
+      .getByRole('button', { name: 'Share viewing-only game link', exact: true })
+      .count(),
+    1,
+  );
+  await owner.page.getByRole('link', { name: 'Resume campaign', exact: false }).click();
+  const ownerReports = owner.page.locator('[data-reports-panel]');
+  const shareLink = ownerReports.getByRole('button', { name: 'Share live link', exact: true });
+  const stopSharing = ownerReports.getByRole('button', { name: 'Stop sharing', exact: true });
+  await shareLink.waitFor();
+  assert.equal(await stopSharing.count(), 0);
+  await shareLink.scrollIntoViewIfNeeded();
+  await owner.page.evaluate(() => {
+    window.originalOwnerMap = document.querySelector('.world-map');
+    window.originalOwnerScroll = window.scrollY;
+  });
+  await shareLink.click();
   await owner.page.waitForFunction(() => Boolean(window.copiedUrl));
   const link = await owner.page.evaluate(() => window.copiedUrl);
   assert.equal(link, origin + '/#live/' + game.id);
+  await stopSharing.waitFor();
+  assert.equal(
+    await owner.page.evaluate(
+      () => window.originalOwnerMap === document.querySelector('.world-map'),
+    ),
+    true,
+  );
+  assert.equal(
+    await owner.page.evaluate(() => window.scrollY === window.originalOwnerScroll),
+    true,
+  );
+  await owner.page.waitForFunction(() => window.fixturePresenceOnline === true);
   assert.doesNotMatch(records.get('liveGames/' + game.id).payload, /private@example/);
+  // The added actions must leave both report tabs readable at the tester's desktop size.
+  await owner.page.setViewportSize({ width: 1536, height: 728 });
+  await ownerReports.getByRole('button', { name: 'Pin reports', exact: true }).click();
+  assert.equal(
+    await ownerReports.locator('.reports-head').evaluate((header) => {
+      const bounds = header.getBoundingClientRect();
+      return (
+        header.scrollWidth <= header.clientWidth + 1 &&
+        [...header.querySelectorAll('button')].every((button) => {
+          if (!button.checkVisibility()) return true;
+          const rect = button.getBoundingClientRect();
+          return rect.left >= bounds.left && rect.right <= bounds.right;
+        })
+      );
+    }),
+    true,
+  );
+  await owner.page.screenshot({ path: '.firebase/reports-header-sharing-desktop.png' });
   // A fresh visitor context must not inherit the owner's session or private write permissions.
   const visitor = await openPage(false, '/#live/' + game.id, { width: 1440, height: 1000 });
   await visitor.page.locator('.watch-notice').waitFor();
+  // Spectators must never receive owner controls for publishing or revoking a live campaign.
+  assert.equal(
+    await visitor.page.locator('[data-action="share"],[data-action="stop-sharing"]').count(),
+    0,
+  );
+  const presenceNotice = visitor.page.locator('[data-live-presence-notice]');
+  assert.equal(await presenceNotice.isVisible(), false);
+
+  // Leaving the board must notify viewers while keeping the final public position readable.
+  await visitor.page.evaluate(() => {
+    window.originalLiveMap = document.querySelector('.world-map');
+    window.originalLiveReports = document.querySelector('[data-reports-panel]');
+  });
+  const originalPosition = await visitor.page.locator('.world-map').innerHTML();
+  await owner.page.evaluate(() => {
+    location.hash = 'campaigns';
+  });
+  await presenceNotice.waitFor({ state: 'visible' });
+  assert.equal(
+    await presenceNotice.innerText(),
+    'The player has left the game. Showing the last saved position.',
+  );
+  assert.equal(await presenceNotice.getAttribute('role'), 'status');
+  assert.equal(await visitor.page.locator('.world-map').innerHTML(), originalPosition);
+  assert.equal(
+    await visitor.page.evaluate(
+      () =>
+        window.originalLiveMap === document.querySelector('.world-map') &&
+        window.originalLiveReports === document.querySelector('[data-reports-panel]'),
+    ),
+    true,
+  );
+  await owner.page.evaluate((id) => {
+    location.hash = 'game/' + id;
+  }, game.id);
+  await presenceNotice.waitFor({ state: 'hidden' });
+
+  // Browsing another tab is not leaving a campaign; do not falsely interrupt its stream.
+  await owner.page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  assert.equal(await owner.page.evaluate(() => window.fixturePresenceOnline), true);
+  assert.equal(await presenceNotice.isVisible(), false);
+  await owner.page.evaluate(() => {
+    delete document.visibilityState;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // Browser pagehide attempts departure before shutdown; a restored page must resume its stream.
+  await owner.page.evaluate(() => dispatchEvent(new Event('pagehide')));
+  await presenceNotice.waitFor({ state: 'visible' });
+  await owner.page.evaluate(() => dispatchEvent(new Event('pageshow')));
+  await presenceNotice.waitFor({ state: 'hidden' });
   await visitor.page.evaluate(() => {
     location.hash = 'how-to-play';
   });
@@ -207,21 +356,141 @@ try {
   assert.equal(await visitor.page.evaluate(() => window.privateWrites), 0);
   assert.equal(await visitor.page.evaluate(() => window.aiRequests), 0);
   assert.equal(await visitor.page.evaluate(() => localStorage.getItem('unrelated-save')), 'keep');
-  await owner.page.goto(origin + '/#campaigns');
-  // Revocation must remove the live board and prevent subsequent saves from silently republishing it.
-  await owner.page.getByRole('button', { name: 'Stop sharing', exact: true }).click();
+  // Revocation from the reports header removes access without rebuilding the owner's map.
+  await owner.page.evaluate(() => {
+    window.originalOwnerMap = document.querySelector('.world-map');
+  });
+  await stopSharing.click();
+  await stopSharing.waitFor({ state: 'detached' });
+  assert.equal(await shareLink.count(), 1);
+  assert.equal(
+    await owner.page.evaluate(
+      () => window.originalOwnerMap === document.querySelector('.world-map'),
+    ),
+    true,
+  );
   await visitor.page
     .getByRole('heading', { name: 'This game is not being shared right now.' })
     .waitFor();
-  assert.equal(records.size, 0);
+  assert.equal(records.has('liveGames/' + game.id), false);
   await owner.page.evaluate(() => window.fixtureService.spectators.publish(window.fixtureGames[0]));
-  assert.equal(records.size, 0);
+  assert.equal(records.has('liveGames/' + game.id), false);
   assert.deepEqual(owner.errors, []);
   assert.deepEqual(visitor.errors, []);
+
+  // A completed win or loss is a fixed public record, independent of the owner's presence.
+  for (const winner of [0, 2]) {
+    const completed = structuredClone(game);
+    completed.id = 'completed-game-' + winner;
+    completed.name = 'Completed gameplay ' + winner;
+    completed.winner = winner;
+    completed.status = winner === 0 ? 'won' : 'lost';
+    completed.budget = 0;
+    completed.battle = null;
+    completed.countries.forEach((country) => {
+      country.owner = winner;
+    });
+    completed.events = [];
+    new GameEngine(completed).event('victory', 'The winning commander controls all ten countries.');
+    completed.events[0].commentary = 'A decisive finish brings the campaign to a close.';
+    completed.events[0].commentaryVersion = 2;
+    completed.privateAccountEmail = 'private@example.invalid';
+    completed.privateCredential = 'keep-private';
+    // Previously published streams must retain their revoke control after the game ends.
+    const existingLivePath = 'liveGames/' + completed.id;
+    if (winner === 2)
+      records.set(existingLivePath, {
+        version: 1,
+        ownerUid: 'owner',
+        gameId: completed.id,
+        payload: spectatorPayload(completed),
+        updatedAt: Date.now(),
+      });
+    const completedOwner = await openPage(
+      true,
+      '/#game/' + completed.id,
+      { width: 1440, height: 1000 },
+      completed,
+    );
+    const completedReports = completedOwner.page.locator('[data-reports-panel]');
+    const recordedShare = completedReports.getByRole('button', {
+      name: 'Share gameplay',
+      exact: true,
+    });
+    await recordedShare.waitFor();
+    const writesBeforeShare = await completedOwner.page.evaluate(() => window.privateWrites);
+    const livePayloadBeforeShare = records.get(existingLivePath)?.payload;
+    assert.equal(
+      await completedReports
+        .getByRole('button', { name: 'Stop live sharing', exact: true })
+        .count(),
+      winner === 2 ? 1 : 0,
+    );
+    await recordedShare.click();
+    await completedOwner.page.waitForFunction(() => Boolean(window.copiedUrl));
+    const recordedUrl = new URL(await completedOwner.page.evaluate(() => window.copiedUrl));
+    assert.equal(recordedUrl.hash.startsWith('#watch/'), true);
+    const restored = decodeSnapshot(recordedUrl.hash.slice('#watch/'.length));
+    assert.equal(restored.winner, winner);
+    assert.equal(
+      restored.countries.every((country) => country.owner === winner),
+      true,
+    );
+    assert.doesNotMatch(JSON.stringify(restored), /private@example|keep-private/);
+    assert.equal(await completedOwner.page.evaluate(() => window.privateWrites), writesBeforeShare);
+    assert.equal(records.get(existingLivePath)?.payload, livePayloadBeforeShare);
+
+    const recordedVisitor = await openPage(false, '/' + recordedUrl.hash, {
+      width: 1440,
+      height: 1000,
+    });
+    await recordedVisitor.page.locator('.watch-notice').waitFor();
+    assert.match(await recordedVisitor.page.locator('.watch-notice').innerText(), /Viewing only/);
+    assert.equal(await recordedVisitor.page.locator('[data-live-presence-badge]').count(), 0);
+    assert.equal(await recordedVisitor.page.locator('[data-action="share"]').count(), 0);
+    assert.equal(await recordedVisitor.page.locator('[data-action="stop-sharing"]').count(), 0);
+    assert.equal(await recordedVisitor.page.locator('[data-action="start-attack"]').count(), 0);
+    await recordedVisitor.page.getByRole('tab', { name: 'AI commentary', exact: true }).click();
+    assert.match(
+      await recordedVisitor.page.locator('[data-report-panel="ai"]').innerText(),
+      /A decisive finish/,
+    );
+    await recordedVisitor.page.getByRole('link', { name: 'Battle replay', exact: true }).click();
+    await recordedVisitor.page.getByRole('link', { name: 'Back to board', exact: true }).click();
+    const returnedHash = new URL(recordedVisitor.page.url()).hash;
+    assert.equal(returnedHash.startsWith('#watch/'), true);
+    // Replay may re-encode trusted country metadata; its recorded board must stay the same.
+    const returnedGame = decodeSnapshot(returnedHash.slice('#watch/'.length));
+    assert.equal(returnedGame.winner, winner);
+    assert.deepEqual(returnedGame.countries, restored.countries);
+    assert.equal(await recordedVisitor.page.evaluate(() => window.privateWrites), 0);
+    assert.equal(await recordedVisitor.page.evaluate(() => window.aiRequests), 0);
+    if (winner === 2) {
+      await completedReports
+        .getByRole('button', { name: 'Stop live sharing', exact: true })
+        .click();
+      assert.equal(records.has(existingLivePath), false);
+      await recordedVisitor.page.locator('.watch-notice').waitFor();
+    }
+    await completedOwner.page.goto(origin + '/#campaigns');
+    assert.equal(
+      await completedOwner.page
+        .getByRole('button', { name: 'Share gameplay', exact: true })
+        .count(),
+      1,
+    );
+    assert.deepEqual(completedOwner.errors, []);
+    assert.deepEqual(recordedVisitor.errors, []);
+    await completedOwner.context.close();
+    await recordedVisitor.context.close();
+  }
   console.log(
     'PASS: anonymous visitors see live moves, delayed dice results and escaped' +
-      ' AI reports; replay returns live; no visitor writes or AI requests; owner' +
-      ' revocation removes access.',
+      ' AI reports; departure/rejoin updates the stream without rebuilding the board;' +
+      ' switching tabs stays online; pagehide/pageshow updates presence; replay returns live;' +
+      ' no visitor writes or AI requests;' +
+      ' reports-header sharing copies the live link and revokes access without rebuilding the map;' +
+      ' completed games share private-field-free recorded links with replay and AI reports.',
   );
 } finally {
   await browser?.close();
