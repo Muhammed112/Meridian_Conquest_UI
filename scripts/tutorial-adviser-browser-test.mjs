@@ -114,16 +114,83 @@ async function checkIsolation(page, errors, progress = 'offered') {
 
 /** Observe real intermediate text so a completed, instant instruction cannot pass as typing. */
 async function readTyping(page) {
-  await page.waitForFunction(() => {
+  const sample = await page.waitForFunction(() => {
     const copy = document.querySelector('.tutorial-dialogue-copy');
     const typed = copy?.querySelector('.tutorial-dialogue-typed')?.textContent.length ?? 0;
-    return copy?.dataset.typing === 'true' && typed > 0;
+    // Return the observed state atomically: another frame can run before a separate DOM read.
+    return copy?.dataset.typing === 'true' && typed > 0
+      ? {
+          length: typed,
+          fullLength: copy.querySelector('.tutorial-dialogue-text').textContent.length,
+          height: copy.getBoundingClientRect().height,
+        }
+      : false;
   });
-  return page.locator('.tutorial-dialogue-copy').evaluate((copy) => ({
-    length: copy.querySelector('.tutorial-dialogue-typed').textContent.length,
-    fullLength: copy.querySelector('.tutorial-dialogue-text').textContent.length,
-    height: copy.getBoundingClientRect().height,
-  }));
+  try {
+    return await sample.jsonValue();
+  } finally {
+    await sample.dispose();
+  }
+}
+
+/** A redraw must preserve the sentence even when its first frame started before the click. */
+async function checkAllocationTyping(plus) {
+  const state = await plus.evaluate(async (button) => {
+    const previousCopy = document.querySelector('.tutorial-dialogue-copy');
+    const read = () => {
+      const copy = document.querySelector('.tutorial-dialogue-copy');
+      return {
+        typed: copy.querySelector('.tutorial-dialogue-typed').textContent,
+        full: copy.querySelector('.tutorial-dialogue-text').textContent,
+        typing: copy.dataset.typing,
+        paragraph: document.querySelector('.tutorial-guide').dataset.dialoguePage,
+        allocation: document.querySelector('.allocation-row output').textContent,
+      };
+    };
+    const before = read();
+    const requestFrame = window.requestAnimationFrame;
+    const frameStartedAt = performance.now() - 1;
+    const afterFrames = [];
+    // Chromium may deliver a frame-start timestamp older than the synchronous board mount.
+    // Force that ordering and sample inside the callback so later typing cannot hide a rewind.
+    window.requestAnimationFrame = (callback) =>
+      requestFrame.call(window, (timestamp) => {
+        callback(Math.min(timestamp, frameStartedAt));
+        afterFrames.push(read());
+      });
+    let afterRender;
+    try {
+      afterRender = await new Promise((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (document.querySelector('.tutorial-dialogue-copy') === previousCopy) return;
+          observer.disconnect();
+          resolve(read());
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        // The click handler awaits the shared-game guard before replacing the board DOM.
+        button.click();
+      });
+    } finally {
+      window.requestAnimationFrame = requestFrame;
+    }
+    // This observer is queued after the mount's callbacks in the same frame.
+    return new Promise((resolve) =>
+      requestFrame.call(window, () => resolve({ before, afterRender, afterFrames })),
+    );
+  });
+  assert.equal(state.before.typing, 'true', 'Allocate while the sentence is still typing.');
+  assert.ok(state.before.typed.length > 0, 'The sentence must already have a visible prefix.');
+  assert.equal(state.before.allocation, '+0');
+  assert.equal(state.afterRender.allocation, '+1', 'The click must redraw the allocation.');
+  assert.ok(state.afterFrames.length > 0, 'Exercise the first frame after the board redraw.');
+  for (const after of [state.afterRender, ...state.afterFrames]) {
+    assert.equal(after.full, state.before.full);
+    assert.equal(after.paragraph, state.before.paragraph);
+    assert.ok(
+      after.typed.startsWith(state.before.typed),
+      'Allocating a soldier rerenders the board without restarting the adviser sentence.',
+    );
+  }
 }
 
 /** The hand must identify an actual clickable control without covering its pointer hit target. */
@@ -198,14 +265,9 @@ try {
     await page.locator('[data-action="tutorial-next"]').click();
     await page.locator('.map-marker[data-code="ZA"] text').click();
     await checkStep(page, 'reinforce');
-    const beforeAllocation = await readTyping(page);
+    await readTyping(page);
     const plus = page.locator('[data-action="allocate-plus"][data-code="ZA"]');
-    await plus.click();
-    const afterAllocation = await page.locator('.tutorial-dialogue-typed').textContent();
-    assert.ok(
-      afterAllocation.length >= beforeAllocation.length,
-      'Allocating a soldier rerenders the board without restarting the adviser sentence.',
-    );
+    await checkAllocationTyping(plus);
     await prepareInstruction(page);
     await checkPointer(page, plus);
     await plus.click();
@@ -215,9 +277,10 @@ try {
     await readTyping(page);
     await page.locator('[data-action="tutorial-skip"]').click();
     await page.waitForURL('**/#campaigns');
+    // Hash navigation updates the URL before the route handler disposes of the adviser DOM.
+    await page.locator('.tutorial-guide').waitFor({ state: 'detached' });
     assert.equal(await page.locator('.tutorial-pointer').count(), 0);
     assert.equal(await page.locator('[data-typing="true"]').count(), 0);
-    await page.waitForTimeout(100);
     await checkIsolation(page, errors, 'skipped');
     await page.close();
     console.log(

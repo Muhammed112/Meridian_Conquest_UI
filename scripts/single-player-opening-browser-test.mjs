@@ -71,6 +71,8 @@ async function openingOrder(page, expectedSeat) {
 
 /** Desktop seats run down five rows per column so every die stays visible after rolling. */
 async function checkRosterLayout(page, columns, allVisible = false) {
+  // Clicking Roll can center its button; measure all dice together after positioning the whole roster.
+  if (allVisible) await page.locator('.opening-roster').scrollIntoViewIfNeeded();
   const geometry = await page.locator('.setup-roster-row').evaluateAll((rows) => {
     const bounds = (element) => {
       const rect = element.getBoundingClientRect();
@@ -82,6 +84,7 @@ async function checkRosterLayout(page, columns, allVisible = false) {
       width: innerWidth,
       height: innerHeight,
       documentWidth: document.documentElement.scrollWidth,
+      scrollY,
     };
   });
   assert.equal(geometry.rows.length, 10);
@@ -94,7 +97,11 @@ async function checkRosterLayout(page, columns, allVisible = false) {
       assert.ok(row.top >= geometry.rows[seat - 1].bottom - 1, 'Country rows must not overlap.');
     if (allVisible) {
       const die = geometry.dice[seat];
-      assert.ok(die.top >= 0 && die.bottom <= geometry.height, 'All ten dice must fit in view.');
+      assert.ok(
+        die.top >= 0 && die.bottom <= geometry.height,
+        `All ten dice must fit in view. Seat ${seat + 1}: ${JSON.stringify(die)}; ` +
+          `viewport ${geometry.width}x${geometry.height}; scrollY ${geometry.scrollY}.`,
+      );
     }
   }
   if (columns === 2) {
@@ -317,6 +324,13 @@ try {
 
   // Only the two highest tied players reroll; the nine NPCs participate just like the human.
   const bot = await openSetup('full', { width: 1366, height: 768 });
+  // A long real country name makes the short desktop roster taller before Roll scrolls its button.
+  await bot.locator('#country-search').fill('Saint Helena');
+  await bot.locator('#country-options [data-action="setup-country"][data-code="SH"]').click();
+  assert.equal(
+    await bot.locator('.setup-country-name').first().textContent(),
+    'Saint Helena, Ascension and Tristan da Cunha',
+  );
   await roll(bot, [5, 5, 0, 1, 2, 3, 4, 0, 1, 2], 'setup-roll', (page) =>
     checkRosterLayout(page, 2, true),
   );

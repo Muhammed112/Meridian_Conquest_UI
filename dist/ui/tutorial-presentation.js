@@ -154,7 +154,9 @@ export function createTutorialPresentation() {
         if (!active) return;
         charactersShown = Math.min(
           fullText.length,
-          startingCharacters + Math.floor((now - startedAt) / 22),
+          // A frame's timestamp can precede a mount performed during that same frame.
+          // Keep the restored prefix until the new instruction clock has actually advanced.
+          startingCharacters + Math.floor(Math.max(0, now - startedAt) / 22),
         );
         updateCopy();
         if (charactersShown < fullText.length) frame = view.requestAnimationFrame(typeInstruction);
