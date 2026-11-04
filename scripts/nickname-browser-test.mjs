@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import { startTestServer } from './lib/static-server.mjs';
 import { firebaseConfig as config } from '../dist/firebase-config.js';
+import { completeCampaignOpening } from './lib/setup.mjs';
 
 const base = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents`;
 const users = [],
@@ -132,6 +133,7 @@ try {
     location.hash = 'setup';
   });
   await host.locator('#session-name').fill('Temporary nickname campaign');
+  await completeCampaignOpening(host);
   await host.locator('[data-action="create-game"]').click();
   await host.locator('.game-heading').waitFor();
   const gameId = new URL(host.url()).hash.split('/')[1],

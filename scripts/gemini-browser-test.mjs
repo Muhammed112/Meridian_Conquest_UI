@@ -9,6 +9,7 @@ import { startTestServer } from './lib/static-server.mjs';
 import { firebaseConfig as config } from '../dist/firebase-config.js';
 import { aiConfig } from '../dist/ai-config.js';
 import { GameEngine } from '../dist/engine.js';
+import { completeCampaignOpening } from './lib/setup.mjs';
 const cli = firebaseCliAuth();
 
 const account = cli.getGlobalDefaultAccount(),
@@ -379,6 +380,7 @@ try {
 
   await page.goto(origin + '/#setup');
   await page.locator('#session-name').fill('New save release check');
+  await completeCampaignOpening(page);
   await page.locator('[data-action="create-game"]').click();
   await page.waitForURL(/#game\//);
   const createdId = new URL(page.url()).hash.split('/')[1];

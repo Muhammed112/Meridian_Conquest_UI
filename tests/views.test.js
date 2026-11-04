@@ -148,18 +148,34 @@ test('the roster groups owners by country count and preserves each country row',
 });
 
 /** Render diplomacy against real engine state without requiring browser or cloud services. */
-function diplomacyView(game, state) {
+function diplomacyView(game, state, { seat = 0, nameOf = (player) => `Commander ${player}` } = {}) {
   const { gameView } = createBattleViews({
     state,
     motionFrame: null,
-    owned: (board, player = 0) => board.countries.filter((country) => country.owner === player),
-    multiplayer: { playerSeat: 0, isHuman: (player) => player < 2, isHost: true },
+    owned: (board, player = game.mode === 'multiplayer' ? seat : 0) =>
+      board.countries.filter((country) => country.owner === player),
+    multiplayer: { playerSeat: seat, isHuman: (player) => player < 2, isHost: seat === 0 },
     nav: () => '',
-    nameOf: (player) => `Commander ${player}`,
+    nameOf,
     theatre: () => '',
     campaignPopulationLabel: () => '',
   });
   return gameView(game);
+}
+
+/** An accepted pact between two smaller commanders, with a stronger outside rival. */
+function alliedGame() {
+  const game = GameEngine.create('Diplomacy targets', 'ZA', true);
+  const owners = [0, 0, 1, 1, 2, 2, 2, 2, 3, 4];
+  game.countries.forEach((country, index) => {
+    country.owner = owners[index];
+    country.army = 10;
+  });
+  game.round = 1;
+  game.budget = 0;
+  game.position = game.order.indexOf(0);
+  assert.equal(new GameEngine(game).proposeAlliance(1).accepted, true);
+  return game;
 }
 
 // Rendering a remembered diplomacy tab must never bypass spectator, tutorial or game-phase guards.
@@ -204,16 +220,7 @@ test('diplomacy controls are available only during a human turn with an NPC to n
 
 // An alliance warns about betrayal but must preserve the ordinary ability to choose any rival target.
 test('allied countries remain target options and the pact appears in the same action panel', () => {
-  const game = GameEngine.create('Diplomacy targets', 'ZA', true);
-  const owners = [0, 0, 1, 1, 2, 2, 2, 2, 3, 4];
-  game.countries.forEach((country, index) => {
-    country.owner = owners[index];
-    country.army = 10;
-  });
-  game.round = 1;
-  game.budget = 0;
-  game.position = game.order.indexOf(0);
-  assert.equal(new GameEngine(game).proposeAlliance(1).accepted, true);
+  const game = alliedGame();
   const state = {
     view: 'game',
     action: 'planning',
@@ -242,5 +249,88 @@ test('allied countries remain target options and the pact appears in the same ac
     game,
     original,
     'Switching action cards must not change the game or its events.',
+  );
+});
+
+// Roster badges identify the player's current ally and show the live pact duration on hover.
+test('only the allied roster group has a named header and a remaining-rounds badge', () => {
+  const game = alliedGame();
+  const state = { view: 'game', allocations: {}, reportDock: {} };
+  const original = structuredClone(game);
+  const markup = diplomacyView(game, state, { seat: 1 });
+  const groupHeaders = [
+    ...markup.matchAll(/aria-label="Player (\d+) countries"([\s\S]*?)(?=<button)/g),
+  ];
+  assert.deepEqual(
+    groupHeaders.map((match) => Number(match[1])),
+    [3, 1, 2, 4, 5],
+  );
+  for (const [, player, header] of groupHeaders) {
+    if (player === '2') {
+      assert.match(header, /class="country-owner-group-head"/);
+      assert.match(header, /Commander 1/);
+      assert.match(header, /class="badge gold ally-badge"[^>]*title="3 rounds remaining"/);
+      assert.match(header, />\s*Ally\s*</);
+    } else {
+      assert.doesNotMatch(header, /country-owner-group-head|ally-badge/);
+    }
+  }
+  assert.equal([...markup.matchAll(/class="badge gold ally-badge"/g)].length, 1);
+  assert.deepEqual(game, original, 'Rendering a badge must not modify the game.');
+
+  // The app's nameOf callback already escapes commander names before returning markup.
+  const escaped = diplomacyView(game, state, { nameOf: () => '&lt;Commander &amp; Ally&gt;' });
+  const header = escaped.match(/class="country-owner-group-head"([\s\S]*?)(?=<button)/)[1];
+  assert.match(header, /&lt;Commander &amp; Ally&gt;/);
+  assert.doesNotMatch(header, /<Commander/);
+  game.round = 3;
+  assert.match(
+    diplomacyView(game, state),
+    /class="badge gold ally-badge"[^>]*title="1 round remaining"/,
+  );
+});
+
+// Old accepted events must not keep the badge after the canonical pact has ended.
+test('the roster ally badge disappears on expiry, betrayal and elimination', () => {
+  const state = { view: 'game', allocations: {}, reportDock: {} };
+  for (const ending of ['expiry', 'betrayal', 'elimination']) {
+    const game = alliedGame();
+    assert.match(diplomacyView(game, state), /ally-badge/);
+    if (ending === 'expiry') game.round = 4;
+    if (ending === 'betrayal')
+      new GameEngine(game).startAttack(game.countries[0].code, game.countries[2].code);
+    if (ending === 'elimination')
+      game.countries.forEach((country) => {
+        if (country.owner === 1) country.owner = 2;
+      });
+    assert.doesNotMatch(diplomacyView(game, state), /ally-badge|country-owner-group-head/, ending);
+  }
+});
+
+// A friend's NPC pact belongs to their viewer seat and must not label an uninvolved host's roster.
+test('multiplayer roster ally badges are relative to the viewer rather than the host', () => {
+  const game = GameEngine.create('Friends with an ally', 'ZA', true);
+  const owners = [1, 1, 2, 2, 3, 3, 3, 3, 0, 4];
+  game.countries.forEach((country, index) => {
+    country.owner = owners[index];
+    country.army = 10;
+  });
+  game.mode = 'multiplayer';
+  game.round = 1;
+  game.budget = 0;
+  game.position = game.order.indexOf(1);
+  const state = { view: 'multiplayer', allocations: {}, reportDock: {} };
+  assert.doesNotMatch(diplomacyView(game, state, { seat: 1 }), /ally-badge/);
+  assert.equal(new GameEngine(game).proposeAlliance(2, { humanCount: 2 }).accepted, true);
+
+  const friendMarkup = diplomacyView(game, state, { seat: 1 });
+  const allyHeader = friendMarkup.match(/aria-label="Player 3 countries"([\s\S]*?)(?=<button)/)[1];
+  assert.match(allyHeader, /country-owner-group-head/);
+  assert.match(allyHeader, /Commander 2/);
+  assert.match(allyHeader, /class="badge gold ally-badge"[^>]*title="3 rounds remaining"/);
+  assert.equal([...friendMarkup.matchAll(/class="badge gold ally-badge"/g)].length, 1);
+  assert.doesNotMatch(
+    diplomacyView(game, state, { seat: 0 }),
+    /ally-badge|country-owner-group-head/,
   );
 });

@@ -5,12 +5,19 @@ import { difficultyFor } from '../difficulty.js';
 import { normalizeNickname } from '../profile.js';
 import { selectReportTab, setReportsDock } from '../ui/reports.js';
 import { applyBoardChoice } from './board-actions.js';
+import {
+  createOpeningRolls,
+  rerollOpeningLeaders,
+} from '../opening-rolls.js?v=opening-dice-20261104-1';
+import { openingDiceFrame } from '../ui/opening-dice.js?v=opening-dice-20261104-2';
 
 // Register the UI actions once. The application owns state and services.
 export function bindAppEvents(context) {
   // Redrawing opponents changes only the unsaved setup preview.
   function redrawSetupGame() {
     const { state } = context;
+    state.setupOpening = null;
+    state.setupRollStartedAt = null;
     state.setupGame = GameEngine.create(
       state.setupName,
       state.setupStart,
@@ -140,6 +147,8 @@ export function bindAppEvents(context) {
         context.state.view !== 'tutorial' &&
         [
           'create-game',
+          'setup-roll',
+          'setup-reroll',
           'fast',
           'continue-npcs',
           'allocate-plus',
@@ -244,18 +253,51 @@ export function bindAppEvents(context) {
         context.notify('Nine distinct rivals redrawn.');
         return;
       }
+      if (action === 'setup-roll' || action === 'setup-reroll') {
+        const { state } = context;
+        if (state.view !== 'setup' || !state.setupGame) return;
+        if (rollPending(openingDiceFrame(state, context.motionDirector.reducedMotion))) return;
+        // Each click rolls every eligible commander once; redraws never generate another result.
+        if (action === 'setup-roll') {
+          if (state.setupOpening) return;
+          state.setupOpening = createOpeningRolls(
+            state.setupGame.countries.map((_, seat) => String(seat)),
+          );
+        } else state.setupOpening = rerollOpeningLeaders(state.setupOpening);
+        state.setupRollStartedAt = performance.now();
+        context.render();
+        return;
+      }
       if (action === 'create-game') {
+        const { state } = context;
+        if (state.view !== 'setup' || !state.setupGame) return;
+        if (rollPending(openingDiceFrame(state, context.motionDirector.reducedMotion))) return;
+        if (!state.setupOpening?.winner) {
+          context.notify('Finish the opening dice rolls before starting the campaign.');
+          return;
+        }
         const name = context.state.setupName.trim();
         if (name.length < 3) {
           context.notify('Give your campaign a name of at least three characters.');
           document.getElementById('session-name').focus();
           return;
         }
-        const created = context.state.setupGame;
-        created.name = name;
-        created.difficulty = difficultyFor(context.state.setupDifficulty).id;
+        // Use the existing engine setup path so the first saved turn matches the winning die.
+        const created = GameEngine.create(
+          name,
+          state.setupStart,
+          false,
+          state.setupDifficulty,
+          context.profile?.name,
+          {
+            countries: state.setupGame.countries.map((country) => country.code),
+            firstSeat: Number(state.setupOpening.winner),
+          },
+        );
         context.games.unshift(created);
-        context.state.setupGame = null;
+        state.setupGame = null;
+        state.setupOpening = null;
+        state.setupRollStartedAt = null;
         context.save();
         location.hash = `game/${created.id}`;
         return;

@@ -5,6 +5,7 @@ import { startTestServer } from './lib/static-server.mjs';
 
 import { GameEngine } from '../dist/engine.js';
 import { bundledPopulations } from '../dist/population-snapshot.js';
+import { completeCampaignOpening } from './lib/setup.mjs';
 
 let browser;
 const server = await startTestServer();
@@ -74,6 +75,7 @@ try {
       await page.getByText(/Using saved data/).waitFor();
       assert.match(await page.locator('[data-code="ZA"] .strength').innerText(), /5/);
     }
+    await completeCampaignOpening(page);
     await page.locator('[data-action="create-game"]').click();
     await page.locator('.game-heading h1').waitFor();
     const saved = await page.evaluate(() =>

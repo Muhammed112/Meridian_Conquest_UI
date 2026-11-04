@@ -1,5 +1,5 @@
 import { escapeHTML } from './html.js';
-import { bindAppEvents } from './controllers/events.js';
+import { bindAppEvents } from './controllers/events.js?v=opening-dice-20261104-2';
 import { applyCommentary } from './commentary.js?v=match-commentary-20261026-1';
 import { localDevelopment } from './ai-local-config.js';
 import { createMultiplayerUI } from './multiplayer.js';
@@ -29,7 +29,8 @@ import { createMapView } from './ui/map.js';
 import { syncMapLabels } from './ui/map-labels.js';
 import { createWelcomeDemo } from './ui/welcome-demo.js';
 import { createTutorialPresentation } from './ui/tutorial-presentation.js';
-import { createCampaignViews } from './ui/campaigns.js';
+import { createCampaignViews } from './ui/campaigns.js?v=opening-dice-20261104-3';
+import { openingDiceFrame } from './ui/opening-dice.js?v=opening-dice-20261104-2';
 import { createBattleViews } from './ui/battle.js';
 import { updateReportsCommentary, syncReportsDock } from './ui/reports.js';
 import { createNpcController } from './controllers/npcs.js';
@@ -46,6 +47,9 @@ import { renderCampaignStatus } from './ui/campaign-status.js';
 
 // Getters keep view dependencies current across account changes, routing and animation frames.
 const viewContext = {
+  get die() {
+    return die;
+  },
   get app() {
     return app;
   },
@@ -269,6 +273,8 @@ const state = {
   setupName: 'Southern Meridian',
   setupSearch: '',
   setupGame: null,
+  setupOpening: null,
+  setupRollStartedAt: null,
   replay: 0,
   reportTab: 'field',
   reportDock: { pinned: false, collapsed: false },
@@ -569,6 +575,8 @@ function render({ tutorialAction } = {}) {
     motionDirector.reset();
     motionFrame = null;
   }
+  const setupFrame =
+    state.view === 'setup' ? openingDiceFrame(state, motionDirector.reducedMotion) : null;
   app.innerHTML =
     state.liveShareId && !state.watch
       ? liveWatchNotice()
@@ -592,7 +600,7 @@ function render({ tutorialAction } = {}) {
             : state.view === 'campaigns'
               ? dashboard()
               : state.view === 'setup'
-                ? setup()
+                ? setup(setupFrame)
                 : ['signin', 'signup', 'reset'].includes(state.view)
                   ? auth(state.view)
                   : state.view === 'tutorial'
@@ -612,7 +620,8 @@ function render({ tutorialAction } = {}) {
   syncReportsDock(app);
   syncMapLabels(app);
   welcomeDemo.mount(app, { reducedMotion: motionDirector.reducedMotion });
-  if (motionFrame) motionDirector.mount(app, motionFrame, { onSettled: render });
+  const diceFrame = setupFrame || motionFrame;
+  if (diceFrame) motionDirector.mount(app, diceFrame, { onSettled: render });
   if (state.view === 'tutorial') {
     const actionPanelAnchored = syncTutorialControls(
       app,

@@ -14,10 +14,14 @@ Run `npm run check` for formatting, linting (including syntax checks) and unit t
 
 Live game: [meridian-conquest.vercel.app](https://meridian-conquest.vercel.app).
 
-The 2 November 2026 release includes the homepage briefing reveal, local flag
-images with roster abbreviations, the tutorial scroll fix, one-field multiplayer
-country search and the latest commentary and move validation. Matching Firestore
-rules and indexes are published. See the [release checks](docs/VERCEL.md#latest-release-2-november-2026).
+The 4 November 2026 release includes the adviser tutorial with a personal welcome,
+typed rules and examples, an animated pointing hand, automatic control scrolling,
+guided diplomacy and the transfer-button fix. Commit `1da85c7` is on GitHub's
+`main` branch and deployed to the live site. Formatting, lint and all 245 unit
+tests passed, along with both tutorial browser suites. Deployment verification
+matched 299 published files and checked the homepage in a browser. This frontend
+release uses the existing published Firestore rules and indexes. See the
+[deployment guide](docs/VERCEL.md) for hosting and earlier release evidence.
 
 The repository includes `vercel.json` for static hosting: framework **Other**, no build or dependency installation, and `dist` as the public directory. Gameplay, Firebase saves and Gemini keep using the same browser code and Firebase project. No personal Gemini API key is needed in Vercel.
 
@@ -43,7 +47,7 @@ This release starts the campaign list empty, removes the old `meridian-conquest-
 
 The welcome map loops through attacks, troop transfers and captures using the gameplay engine and its existing visual effects. Its scripted board stays in memory, makes no AI requests and never changes saved campaigns. The preview stops when the tab is hidden or you leave the welcome page, restarts when the tab becomes visible, and stays static with reduced motion enabled.
 
-The map includes flowing attack arrows, gold capture ripples and colour transitions, commander-coloured soldier squads and moving count badges during transfers and attack launches, plus floating troop changes, tumbling dice with delayed result highlights, short battle impacts, commander turn highlights and announcements, shared map/roster hover feedback, a pulsing selection and a final map zoom with a gold victory banner and brief confetti. Effects follow new campaign events and replay steps. Troops and missiles move through frame-by-frame SVG transforms in JavaScript. Red casualty badges show each affected country's actual losses on the map and roster after the dice settle; missiles are visual only. An Animations control lets players choose full or reduced motion, starting with their system preference. Asset versioning refreshes the changed animation code and styles. Resuming a save does not replay old combat effects. Animation state is never saved into the campaign or used for dice rolls and NPC decisions.
+The map includes flowing attack arrows, gold capture ripples and colour transitions, commander-coloured soldier squads and moving count badges during transfers and attack launches, plus floating troop changes, tumbling dice with delayed result highlights, short battle impacts, commander turn highlights and announcements, shared map/roster hover feedback, a pulsing selection and a final map zoom with a gold victory banner and brief confetti. Effects follow new campaign events and replay steps. Troops and missiles move through frame-by-frame SVG transforms in JavaScript. Red casualty badges show each affected country's actual losses on the map and roster after the dice settle; missiles are visual only. An Animations control lets players choose full or reduced motion, with full animations enabled by default. Asset versioning refreshes the changed animation code and styles. Resuming a save does not replay old combat effects. Animation state is never saved into the campaign or used for dice rolls and NPC decisions.
 
 ## Audio and dice presentation
 
@@ -60,7 +64,28 @@ in the same action card. Pacts last three rounds and cover both commanders' coun
 while armies and turns stay separate. Betrayal lowers trust; only one commander can
 win. See [alliance rules and save behaviour](docs/DIPLOMACY.md).
 
-New players with no saved campaigns enter an interactive tutorial after signing in. A simple guide beside the game controls gives one instruction at a time, with longer explanations under **Rules & examples**. It covers all 26 sections of the supplied instructions; see the [coverage checklist](docs/TUTORIAL.md). It uses the normal map and game controls for reinforcements, attacks, dice results, conquest, transfers and retreat, followed by reports, settings and a practice multiplayer room code. Practice uses preset armies and guided dice, including the 10-versus-2 battle example; it creates no saved campaign, room or Gemini requests. Skip whenever you want, or replay from **Interactive tutorial** in My campaigns or **How to play**. The offer and completion are remembered separately for each account in this browser; clearing browser storage or using another device can show it again. Refreshing practice restarts the lesson.
+New players with no saved campaigns enter a 17-lesson interactive tutorial after
+signing in. Captain Mara welcomes the commander by name and types explanations,
+rules and examples into a dialogue above the map. **Continue** first finishes the
+current sentence, then advances to the next paragraph. An animated index finger
+points to the next control and scrolls it into view when needed. Reduced motion
+shows the full paragraph immediately and keeps the hand still. **Rules & examples**
+also provides the lesson's reference text.
+
+The tutorial covers all 26 sections of the supplied instructions; see the
+[coverage checklist](docs/TUTORIAL.md). Players use the normal map and controls to
+reinforce, attack, inspect dice results, conquer, transfer, negotiate an NPC pact
+and retreat. The diplomacy lessons show a real three-round alliance and explain
+trust, expiry and betrayal. Selecting **Transfer soldiers** after conquest opens
+the transfer form and enters its lesson directly. Later lessons introduce reports
+and settings; multiplayer room codes are explained without a code-entry exercise.
+
+Practice uses preset armies and guided dice, including the 10-versus-2 battle
+example. Its board stays in memory, separate from saved campaigns, multiplayer
+rooms and Gemini requests. Skip whenever you want, or replay from **Interactive
+tutorial** in My campaigns or **How to play**. The offer and completion are
+remembered separately for each account in this browser; clearing browser storage
+or using another device can show it again. Refreshing practice restarts the lesson.
 
 ## Integration boundary
 
@@ -104,6 +129,16 @@ New commentary uses impartial, third-person play-by-play for the whole match, in
 The narrator uses concise military strategy commentary with event-specific guidance for plans, retreat, defence, conquest, elimination and victory. Before new reports are saved, wording checks reject detected sports imagery, premature outcomes and explicit casualty contradictions. Recorded nicknames are exempt from these wording checks. `npm run commentary:preview` evaluates eight real-model scenarios in two bounded requests without writing campaigns; unrestricted prose still needs human review.
 
 The connected project uses Firebase AI Logic with the Gemini Developer API on the free Spark plan. Requests require sign-in and App Check; no personal Gemini API key goes in the browser. See [the setup guide](docs/FIREBASE.md) for configuration, local development and access boundaries.
+
+## Single-player opening dice
+
+After choosing your country and opponents, select **Roll my die**. All ten commanders roll;
+the highest result takes the first turn. **Roll tie-break** rerolls only the tied leaders.
+The dice use the gameplay rolling animation and reveal the result once they settle.
+Reduced motion shows results immediately.
+Select **Start campaign** once there is a winner. Changing countries or redrawing opponents
+resets the opening rolls; editing the campaign name or difficulty retains them. Existing
+campaigns keep their saved turn order.
 
 ## Play with friends
 

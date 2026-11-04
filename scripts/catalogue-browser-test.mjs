@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { startTestServer } from './lib/static-server.mjs';
 import { GameEngine } from '../dist/engine.js';
 import { catalogue } from '../dist/data.js';
+import { completeCampaignOpening } from './lib/setup.mjs';
 
 let browser;
 const server = await startTestServer();
@@ -56,6 +57,7 @@ try {
     await page.locator('[data-code="VA"] .country-flag').evaluate((image) => image.decode());
     assert.match(await page.locator('[data-code="VA"] .country-owner').innerText(), /506 people/);
     await page.locator('#session-name').fill('Vatican browser fixture');
+    await completeCampaignOpening(page);
     await page.locator('[data-action="create-game"]').click();
     await page.locator('.game-heading').waitFor();
     const saved = await page.evaluate(

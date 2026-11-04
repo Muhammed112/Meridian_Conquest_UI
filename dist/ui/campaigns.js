@@ -9,6 +9,9 @@ import { findCountry, catalogue, armyValue, colours, commanders } from '../data.
 import { cloudEnabled } from '../cloud.js?v=match-commentary-20261026-1';
 import { difficultyOptions } from '../difficulty.js';
 import { GameEngine } from '../engine.js';
+import { openingLeaders } from '../opening-rolls.js?v=opening-dice-20261104-1';
+import { diceMotion, rollPending } from '../motion.js?v=battle-reveal-20261026-1';
+import { openingDiceFrame } from './opening-dice.js?v=opening-dice-20261104-2';
 
 /** Compose welcome, campaign catalogue, setup and authentication views from current context. */
 export function createCampaignViews(context) {
@@ -332,11 +335,13 @@ export function createCampaignViews(context) {
   }
 
   /** Create an unsaved board preview once and retain it while editing campaign settings. */
-  function setup() {
+  function setup(frame = openingDiceFrame(context.state, context.motionDirector.reducedMotion)) {
     const { state, profile, nav, populationStatus, nameOf, footer } = context;
 
-    // Preserve the drawn opponents and first player while text fields trigger fresh renders.
-    if (!state.setupGame)
+    // Preserve the drawn opponents and opening results while ordinary settings edits redraw the view.
+    if (!state.setupGame) {
+      state.setupOpening = null;
+      state.setupRollStartedAt = null;
       state.setupGame = GameEngine.create(
         state.setupName,
         state.setupStart,
@@ -344,8 +349,12 @@ export function createCampaignViews(context) {
         state.setupDifficulty,
         profile?.name,
       );
+    }
     const chosen = findCountry(state.setupStart),
       game = state.setupGame;
+    const opening = state.setupOpening;
+    const rolling = rollPending(frame);
+    const tied = openingLeaders(opening).length > 1;
     return /* prettier-ignore */ `<div class="shell"
       >${nav('setup')}<main
         ><div class="page-heading"
@@ -435,34 +444,58 @@ export function createCampaignViews(context) {
                 }</div
               ><div class="panel-body"
                 ><div class="caption">10 distinct countries / 9 rivals drawn</div
-                ><div class="roster-list"
+                ><div class="roster-list opening-roster"
                   >${
                     game.countries
                       .map(
                         (c, i) =>
-                          /* prettier-ignore */ `<div class="setup-roster-row">${
+                          /* prettier-ignore */ `<div class="setup-roster-row setup-opening-row">${
                                         renderCountryFlag(c.code)
-                                      }<span>${
+                                      }<span class="setup-country-name">${
                                         c.name
                                       }</span><span class="who" style="color:${colours[i]}">P${i + 1} ${
                                         escapeHTML(game.playerNames?.[i] || commanders[i])
-                                      }</span><span class="troop-number">${c.army}</span></div>`,
+                                      }</span><span class="troop-number">${c.army}</span>${
+                                        setupDie(i, frame)
+                                      }</div>`,
                       )
                       .join('')
                   }</div
-                ><div class="notice" style="margin-top:18px"
+                ><div class="notice" style="margin-top:18px" role="status" data-setup-opening-status
+                  data-setup-opening-rolling="${rolling}"
                   >${renderIcon('info')}<span
-                    ><strong>${nameOf(game.order[0])} will take the first turn.</strong><br />The
-                    first participant is chosen randomly.</span
+                    ><strong>${
+                      rolling
+                        ? 'Rolling the dice…'
+                        : opening?.winner
+                          ? `${nameOf(Number(opening.winner))} will take the first turn.`
+                          : tied
+                            ? 'The highest roll is tied. Only tied leaders roll again.'
+                            : 'Roll to decide who takes the first turn.'
+                    }</strong><br />${
+                      rolling
+                        ? 'The first turn is revealed when the dice settle.'
+                        : opening
+                          ? `Opening dice / Round ${opening.round}. ` +
+                            (opening.round > 1 ? 'Dimmed dice are out of the tie-break.' : 'Highest roll starts.')
+                          : 'You and all nine rivals roll a die. Highest roll starts.'
+                    }</span
                   ></div
                 ></div
               ><div class="setup-launch"
                 ><span class="small muted">Your next move awaits.</span
                 >${
                   renderButton(
-                    `Start campaign ${renderIcon('arrow')}`,
-                    'create-game',
+                    rolling
+                      ? 'Rolling…'
+                      : opening?.winner
+                        ? `Start campaign ${renderIcon('arrow')}`
+                        : tied ? 'Roll tie-break' : 'Roll my die',
+                    rolling ? 'setup-roll'
+                      : opening?.winner ? 'create-game'
+                        : tied ? 'setup-reroll' : 'setup-roll',
                     'btn-primary',
+                    rolling ? 'disabled' : '',
                   )
                 }</div
               ></section
@@ -475,6 +508,25 @@ export function createCampaignViews(context) {
           ></div
         ></main
       >${footer()}</div
+    >`;
+  }
+
+  /** Show the same die faces used in gameplay; dim commanders who cannot join the tie-break. */
+  function setupDie(seat, frame) {
+    const opening = context.state.setupOpening;
+    const player = String(seat);
+    const face = opening?.rolls[player];
+    const excluded = opening && !opening.contenders.includes(player);
+    const effect = excluded ? { className: '', style: '' } : diceMotion(frame);
+    return /* HTML */ `<span
+      class="setup-opening-die ${excluded ? 'is-out' : ''} ${effect.className}"
+      style="${effect.style}"
+      ${excluded ? 'title="Out of tie-break"' : ''}
+      >${
+        face
+          ? context.die(face, !rollPending(frame) && opening.winner === player ? 'winner' : '')
+          : '<span class="subtle" aria-label="Not rolled">—</span>'
+      }${excluded ? '<span class="sr-only">Out of tie-break</span>' : ''}</span
     >`;
   }
 

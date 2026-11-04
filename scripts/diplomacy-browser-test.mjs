@@ -76,6 +76,16 @@ try {
   await page.locator('[data-action="propose-alliance"]').click();
   await page.locator('.diplomacy-pact').waitFor();
   assert.match(await page.locator('.diplomacy-pact').innerText(), /3 rounds remaining/);
+  const allyBadge = page.locator(
+    '.country-owner-group[aria-label="Player 2 countries"] .ally-badge',
+  );
+  await allyBadge.waitFor();
+  assert.equal(await page.locator('.ally-badge').count(), 1);
+  assert.equal(await allyBadge.getAttribute('title'), '3 rounds remaining');
+  await page.locator('.roster-panel').screenshot({
+    path: '.firebase/ally-roster-badge.png',
+    animations: 'disabled',
+  });
   const accepted = await savedGame(page, game.id);
   assert.ok(allianceFor(accepted, 0), 'The accepted offer must be saved.');
   assert.ok(trustFor(accepted, 1, 0) > trustFor(game, 1, 0));
@@ -109,6 +119,7 @@ try {
   await page.locator('[data-action="roll"]').waitFor();
   const betrayed = await savedGame(page, game.id);
   assert.equal(allianceFor(betrayed, 0), null);
+  assert.equal(await page.locator('.ally-badge').count(), 0, 'Betrayal removes the roster badge.');
   assert.ok(trustFor(betrayed, 1, 0) < trustFor(accepted, 1, 0));
   assert.equal(betrayed.attackUsed, true);
   assert.equal(betrayed.battle.to, allyCode);

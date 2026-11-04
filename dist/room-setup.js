@@ -1,4 +1,14 @@
 import { catalogue, findCountry } from './data.js';
+import {
+  openingDie,
+  openingLeaders,
+  createOpeningRolls,
+  recordOpeningRoll,
+  rerollOpeningLeaders,
+} from './opening-rolls.js?v=opening-dice-20261104-1';
+
+export { openingDie, openingLeaders };
+
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Reject malformed shared setup data before it reaches lobby markup or the game engine. */
@@ -55,16 +65,6 @@ export function validateRoomSetup(room) {
   return room;
 }
 
-/** Draw a six-sided opening die without consuming the combat animation's randomness. */
-export function openingDie(source = globalThis.crypto) {
-  // Reject the last four byte values so modulo six does not favour the first four faces.
-  const limit = 252;
-  let value;
-  do value = source.getRandomValues(new Uint8Array(1))[0];
-  while (value >= limit);
-  return (value % 6) + 1;
-}
-
 /** Reserve one unique country through the room transaction; other members keep their choices. */
 export function chooseRoomCountry(room, uid, country) {
   if (room.status !== 'lobby' || !room.memberIds.includes(uid))
@@ -83,19 +83,6 @@ export function chooseRoomCountry(room, uid, country) {
   };
 }
 
-/** Return the leaders only after every participant in this round has rolled. */
-export function openingLeaders(initiative) {
-  if (!initiative || initiative.contenders.some((id) => !initiative.rolls[id])) return [];
-  const highest = Math.max(...initiative.contenders.map((id) => initiative.rolls[id]));
-  return initiative.contenders.filter((id) => initiative.rolls[id] === highest);
-}
-
-/** Set a winner only for a unique high roll; ties stay visible until the next round. */
-function finishOpeningRound(initiative) {
-  const leaders = openingLeaders(initiative);
-  return { ...initiative, winner: leaders.length === 1 ? leaders[0] : '' };
-}
-
 /** Lock selected countries and fill empty seats with distinct countries and automatic bot rolls. */
 export function prepareRoomRolls(room, uid, roll = openingDie) {
   if (uid !== room.hostUid) throw new Error('Only the host can begin the opening rolls.');
@@ -112,17 +99,13 @@ export function prepareRoomRolls(room, uid, roll = openingDie) {
   const players = Array.from({ length: 10 }, (_, seat) => room.memberIds[seat] || 'bot:' + seat);
   const initiative = {
     countries,
-    players,
-    contenders: [...players],
-    rolls: Object.fromEntries(players.map((id) => [id, room.memberIds.includes(id) ? 0 : roll()])),
-    round: 1,
-    winner: '',
+    ...createOpeningRolls(players, room.memberIds, roll),
   };
   return {
     ...room,
     setupVersion: 1,
     status: 'rolling',
-    initiative: finishOpeningRound(initiative),
+    initiative,
     revision: room.revision + 1,
     updatedAt: Date.now(),
   };
@@ -132,17 +115,11 @@ export function prepareRoomRolls(room, uid, roll = openingDie) {
 export function rollRoomInitiative(room, uid, face = openingDie()) {
   validateRoomSetup(room);
   const setup = room.initiative;
-  if (
-    room.status !== 'rolling' ||
-    !room.memberIds.includes(uid) ||
-    !setup?.contenders.includes(uid)
-  )
+  if (room.status !== 'rolling' || !room.memberIds.includes(uid))
     throw new Error('You are not waiting to roll in this round.');
-  if (setup.winner || setup.rolls[uid]) throw new Error('You have already rolled this round.');
-  if (!Number.isInteger(face) || face < 1 || face > 6) throw new Error('Invalid opening die.');
   return {
     ...room,
-    initiative: finishOpeningRound({ ...setup, rolls: { ...setup.rolls, [uid]: face } }),
+    initiative: recordOpeningRoll(setup, uid, face),
     revision: room.revision + 1,
     updatedAt: Date.now(),
   };
@@ -153,19 +130,9 @@ export function rerollRoomInitiative(room, uid, roll = openingDie) {
   validateRoomSetup(room);
   if (room.status !== 'rolling' || room.hostUid !== uid)
     throw new Error('Only the host can open a tie-break round.');
-  const contenders = openingLeaders(room.initiative);
-  if (contenders.length < 2) throw new Error('A completed tied round is required.');
-  // Non-contenders keep their displayed result; only tied leaders become eligible again.
-  const rolls = { ...room.initiative.rolls };
-  for (const id of contenders) rolls[id] = room.memberIds.includes(id) ? 0 : roll();
   return {
     ...room,
-    initiative: finishOpeningRound({
-      ...room.initiative,
-      contenders,
-      rolls,
-      round: room.initiative.round + 1,
-    }),
+    initiative: rerollOpeningLeaders(room.initiative, room.memberIds, roll),
     revision: room.revision + 1,
     updatedAt: Date.now(),
   };

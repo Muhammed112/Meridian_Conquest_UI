@@ -95,6 +95,7 @@ export function createBattleViews(context) {
   function roster(game) {
     const { motionFrame, state, nameOf } = context;
     const local = localPlayer(game);
+    const alliance = allianceFor(game, local);
     const ownerGroups = new Map();
     for (const country of game.countries) {
       if (!ownerGroups.has(country.owner)) ownerGroups.set(country.owner, []);
@@ -105,6 +106,18 @@ export function createBattleViews(context) {
       ([firstOwner, firstCountries], [secondOwner, secondCountries]) =>
         secondCountries.length - firstCountries.length || firstOwner - secondOwner,
     );
+
+    /** Mark the viewer's current ally once for all of that commander's countries. */
+    function renderAllyHeader(owner) {
+      if (alliance?.ally !== owner) return '';
+      const remaining = `${alliance.roundsLeft} ${alliance.roundsLeft === 1 ? 'round' : 'rounds'} remaining`;
+      return /* HTML */ `<div class="country-owner-group-head">
+        <span class="country-owner-title">P${owner + 1} ${nameOf(owner)}</span>
+        <span class="badge gold ally-badge" title="${remaining}"
+          >${renderIcon('shield')} Ally<span class="sr-only"> · ${remaining}</span></span
+        >
+      </div>`;
+    }
 
     /** Keep each country's existing controls and animation effects inside its owner group. */
     function renderCountry(country) {
@@ -138,7 +151,7 @@ export function createBattleViews(context) {
               class="country-owner-group"
               role="group"
               aria-label="Player ${owner + 1} countries"
-              >${countries.map(renderCountry).join('')}</div
+              >${renderAllyHeader(owner)}${countries.map(renderCountry).join('')}</div
             >`,
           )
           .join('')}</div
