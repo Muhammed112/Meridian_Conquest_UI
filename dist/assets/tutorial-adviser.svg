@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200" viewBox="0 0 160 200" fill="none">
+  <title>A friendly Meridian adviser</title>
+  <defs>
+    <linearGradient id="uniform" x1="43" y1="137" x2="128" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#385367"/>
+      <stop offset="1" stop-color="#192D3E"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="58" y1="53" x2="120" y2="117" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D69A6D"/>
+      <stop offset=".55" stop-color="#BA7B53"/>
+      <stop offset="1" stop-color="#A36746"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="51" y1="30" x2="108" y2="68" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45414A"/>
+      <stop offset="1" stop-color="#24232B"/>
+    </linearGradient>
+  </defs>
+  <!-- Broad shoulders and a clear gold silhouette keep the small portrait readable. -->
+  <path d="M12 200v-27c0-16 10-28 28-34l26-9h29l30 11c16 6 25 18 25 34v25H12Z" fill="url(#uniform)" stroke="#10212F" stroke-width="3"/>
+  <path d="M20 165c4-10 12-16 23-20l12-4 4 14-32 12-7-2Z" fill="#D8B44E"/>
+  <path d="m110 142 14 5c9 4 15 10 18 19l-8 2-28-13 4-13Z" fill="#D8B44E"/>
+  <path d="m32 155 17-6m-13 12 15-6m63-6 14 6m-16 0 15 7" stroke="#7F642A" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M62 112v23l15 18 23-16-1-26-37 1Z" fill="#A56846" stroke="#74452F" stroke-width="2"/>
+  <path d="M67 121c9 9 21 10 32 4v8c-8 6-17 7-25 2l-7-14Z" fill="#855036"/>
+  <path d="m60 131 18 19-12 22-18-30 12-11Z" fill="#192D3E" stroke="#C8A84A" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m101 131-23 19 13 21 22-28-12-12Z" fill="#223C4E" stroke="#C8A84A" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m78 153 1 47" stroke="#D4AF55" stroke-width="2"/>
+  <circle cx="88" cy="180" r="2.5" fill="#E7C76A"/>
+  <circle cx="89" cy="194" r="2.5" fill="#E7C76A"/>
+  <path d="M112 173h21v5h-21z" fill="#E2BF5D"/>
+  <path d="M114 178v8m16-8v8m-17 0h18" stroke="#456174" stroke-width="2" stroke-linecap="round"/>
+  <!-- The turned face, nose and rightward gaze point toward the guide's speech bubble. -->
+  <path d="M49 71c-12-8-18 3-15 14 2 8 8 13 16 10l-1-24Z" fill="#BA7B53" stroke="#74452F" stroke-width="2.5"/>
+  <path d="M40 78c-4-2-3 8 2 11m-1-9 5 5" stroke="#8E543A" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M48 58c4-17 20-25 40-24 23 1 34 17 33 36l-1 10 10 11c2 3 0 6-5 7l-6 1-1 9c-2 14-13 23-28 23-23 0-38-17-42-39-2-13-3-25 0-34Z" fill="url(#skin)" stroke="#77482F" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M52 69c-2 18 1 35 11 46 8 8 16 12 28 13-20 1-34-13-40-31-3-10-4-19-3-28h4Z" fill="#92573C" fill-opacity=".4"/>
+  <path d="m114 81 3 15 7-2" stroke="#945B3D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M62 80c4-7 14-8 20-2-3 7-13 9-20 2Z" fill="#FFF5E7"/>
+  <path d="M98 77c4-6 12-6 17 0-4 6-11 7-17 0Z" fill="#FFF5E7"/>
+  <ellipse cx="76" cy="80" rx="4.5" ry="5.5" fill="#6B432C"/>
+  <ellipse cx="109" cy="77.5" rx="4" ry="5" fill="#6B432C"/>
+  <ellipse cx="77" cy="80" rx="2.2" ry="3.5" fill="#28211F"/>
+  <ellipse cx="110" cy="77.5" rx="2" ry="3" fill="#28211F"/>
+  <circle cx="77.8" cy="78" r="1.3" fill="#FFF"/>
+  <circle cx="110.8" cy="75.8" r="1.2" fill="#FFF"/>
+  <path d="M61 71c7-5 15-5 21-1m17-3c6-3 12-2 16 1" stroke="#373039" stroke-width="4" stroke-linecap="round"/>
+  <path d="M86 108c7 5 17 4 24-2" stroke="#77432F" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M92 115c4 1 8 0 11-1" stroke="#DB9C70" stroke-width="2" stroke-linecap="round"/>
+  <path d="M59 96c3-2 7-2 10-1m36-4 6-1" stroke="#E2A47A" stroke-width="3" stroke-linecap="round" opacity=".65"/>
+  <!-- Swept hair and original geometric insignia avoid borrowed character styling. -->
+  <path d="M45 82c-5-10-8-23-5-33 2-9 7-15 15-19l-4-7 14 2c10-9 30-10 43-2l11 1-3 7c12 9 17 23 11 36l-8 6-3-15c-14 4-28 0-37-8-5 11-14 16-27 17l-1 14-6 1Z" fill="url(#hair)" stroke="#24232B" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M52 46c9-11 20-15 35-13m-24 13c10-7 21-8 32-5m-7 7c8 6 16 7 24 6" stroke="#66606A" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
+  <path d="m43 174 4 6-4 6-4-6 4-6Z" fill="#E4C366"/>
+  <path d="M28 182v18m111-23v23" stroke="#4B6576" stroke-width="2" stroke-linecap="round"/>
+</svg>

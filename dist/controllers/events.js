@@ -371,7 +371,7 @@ export function bindAppEvents(context) {
       context.tutorial?.afterAction(action);
       if (context.tutorial?.step === 'bots') context.state.npcNote = g.events.at(-1).text;
       context.save();
-      context.render();
+      context.render({ tutorialAction: action });
       if (action === 'end-turn' || action === 'stop-attack') queueMicrotask(context.runNPCs);
     } catch (error) {
       context.audioDirector.cue('invalid');
@@ -480,16 +480,6 @@ export function bindAppEvents(context) {
   });
 
   document.addEventListener('submit', async (event) => {
-    if (event.target.id === 'tutorial-room-form') {
-      event.preventDefault();
-      try {
-        context.tutorial?.joinPracticeRoom(new FormData(event.target).get('code'));
-        context.render();
-      } catch (error) {
-        document.getElementById('tutorial-room-error').textContent = error.message;
-      }
-      return;
-    }
     if (event.target.id === 'nickname-form') {
       event.preventDefault();
       await context.savePlayerNickname(event.target);

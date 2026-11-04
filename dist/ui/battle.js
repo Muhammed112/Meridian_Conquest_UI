@@ -265,7 +265,8 @@ export function createBattleViews(context) {
     const isHuman = (player) => (multiplayer ? context.multiplayer.isHuman(player) : player === 0);
     const alliance = allianceFor(game, local);
     const canNegotiate =
-      state.view !== 'tutorial' &&
+      (state.view !== 'tutorial' ||
+        ['diplomacy', 'diplomacy-result'].includes(context.tutorial?.step)) &&
       game.countries.some((country) => country.owner !== local && !isHuman(country.owner));
     const diplomacyButton = canNegotiate
       ? renderButton(`${renderIcon('shield')} Diplomacy`, 'diplomacy', 'btn-full')
@@ -625,7 +626,10 @@ export function createBattleViews(context) {
   }
 
   /** Compose the normal board, optional practice guide and reports without mutating gameplay. */
-  function gameView(game, { guide = '', showActions = true, roomHeader = '' } = {}) {
+  function gameView(
+    game,
+    { guide = '', adviserGuide = false, showActions = true, roomHeader = '' } = {},
+  ) {
     const { owned, motionFrame, state, nav, nameOf, theatre, campaignPopulationLabel } = context;
 
     const local = localPlayer(game),
@@ -641,7 +645,9 @@ export function createBattleViews(context) {
       state.target = game.countries
         .filter((c) => c.owner !== local)
         .sort((a, b) => a.army - b.army)[0]?.code;
-    return /* prettier-ignore */ `<div class="game-shell ${guide ? 'tutorial-mode' : ''}"
+    return /* prettier-ignore */ `<div class="game-shell ${guide ? 'tutorial-mode' : ''}${
+      adviserGuide ? ' tutorial-adviser-mode' : ''
+    }"
       >${nav('', true)}<main
         >${roomHeader}<div class="game-heading"
           ><div
@@ -708,7 +714,7 @@ export function createBattleViews(context) {
           }</div
         ><div class="board-grid"
           >${roster(game)}<div class="map-and-activity"
-            >${
+            >${adviserGuide ? guide : ''}${
               theatre(game.countries, {
                 interactive: true,
                 selected: state.selected,
@@ -748,7 +754,9 @@ export function createBattleViews(context) {
             >${feed(game)}</div
           >${
             guide
-              ? `<div class="tutorial-action-column">${guide}${showActions ? actionPanel(game) : ''}</div>`
+              ? `<div class="tutorial-action-column">${adviserGuide ? '' : guide}${
+                  showActions ? actionPanel(game) : ''
+                }</div>`
               : actionPanel(game)
           }</div
         ><div class="game-save-line"

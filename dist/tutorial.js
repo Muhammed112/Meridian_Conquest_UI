@@ -1,5 +1,6 @@
 import { GameEngine } from './engine.js';
 import { catalogue, armyValue } from './data.js';
+import { allianceFor } from './diplomacy.js';
 
 export const tutorialSteps = [
   'welcome',
@@ -11,12 +12,13 @@ export const tutorialSteps = [
   'conquer',
   'conquest',
   'transfer',
+  'diplomacy',
+  'diplomacy-result',
   'end',
   'bots',
   'retreat',
   'reports',
   'settings',
-  'multiplayer',
   'complete',
 ];
 
@@ -27,7 +29,9 @@ const stepActions = {
   attack: ['select-country', 'start-attack'],
   dice: ['roll'],
   conquer: ['roll'],
+  conquest: ['transfer'],
   transfer: ['select-country', 'transfer', 'planning', 'confirm-transfer'],
+  diplomacy: ['diplomacy', 'propose-alliance', 'planning'],
   end: ['end-turn'],
   retreat: [
     'select-country',
@@ -81,7 +85,8 @@ export class TutorialSession {
   }
   /** Advance reading-only lessons; practice bot turns remain in memory and incur no AI requests. */
   advance() {
-    if (!['welcome', 'losses', 'conquest', 'bots'].includes(this.step)) return false;
+    if (!['welcome', 'losses', 'conquest', 'diplomacy-result', 'bots'].includes(this.step))
+      return false;
     if (this.step === 'bots') {
       const engine = this.engine;
       // Let the learner read one real bot decision, then resume their own practice.
@@ -101,7 +106,12 @@ export class TutorialSession {
       attack: action === 'start-attack',
       dice: action === 'roll',
       conquer: action === 'roll' && !this.game.battle,
+      conquest: action === 'transfer',
       transfer: action === 'confirm-transfer',
+      diplomacy:
+        action === 'propose-alliance' &&
+        Boolean(allianceFor(this.game, 0)) &&
+        this.game.events.at(-1)?.diplomacy?.action === 'accepted',
       end: action === 'end-turn',
       retreat: action === 'stop-attack',
       reports: action === 'report-tab' && tab === 'ai',
@@ -120,13 +130,6 @@ export class TutorialSession {
       }, gaining a second foothold.`;
     }
     return true;
-  }
-  /** Check the lesson’s example code without joining or creating a real multiplayer room. */
-  joinPracticeRoom(code) {
-    if (this.step !== 'multiplayer') return;
-    if (String(code).trim().toUpperCase() !== 'ABC234')
-      throw new Error('For this practice room, enter ABC234.');
-    this.stepIndex++;
   }
 }
 

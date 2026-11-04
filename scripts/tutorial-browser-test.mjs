@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from './lib/browser.mjs';
 import { startTestServer } from './lib/static-server.mjs';
+import { prepareInstruction } from './lib/tutorial-browser.mjs';
 import { GameEngine } from '../dist/engine.js';
 
 // Fake account service only: no Firebase accounts, campaigns or AI quota are used.
@@ -58,8 +59,9 @@ async function openPage(viewport, games = [], motion = 'full') {
   return { page, errors };
 }
 /** Wait for the guide to enter a named lesson before interacting with its controls. */
-async function step(page, name) {
+async function step(page, name, { read = true } = {}) {
   await page.locator(`[data-tutorial-step="${name}"]`).waitFor();
+  if (read) return prepareInstruction(page);
 }
 /** Wait for practice dice to release the guide’s concealed result. */
 async function settled(page) {
@@ -71,6 +73,32 @@ async function settled(page) {
 async function clickAction(page, action) {
   await page.locator(`[data-action="${action}"]`).first().click();
 }
+
+/** Measure the action card against the scrollbar used by desktop or stacked tutorial layouts. */
+async function actionPosition(page) {
+  return page.locator('.tutorial-action-column').evaluate((column) => {
+    const panel = column.querySelector('.action-panel');
+    const columnScrolls = ['auto', 'scroll'].includes(getComputedStyle(column).overflowY);
+    return {
+      top: panel.getBoundingClientRect().top,
+      windowY: scrollY,
+      offset: columnScrolls ? column.scrollTop : scrollY,
+      maximum: columnScrolls
+        ? column.scrollHeight - column.clientHeight
+        : document.documentElement.scrollHeight - innerHeight,
+      columnScrolls,
+    };
+  });
+}
+
+/** Explicit lesson navigation should still bring the new guide heading into view. */
+async function checkGuideVisible(page) {
+  const visible = await page.locator('#tutorial-step-title').evaluate((heading) => {
+    const bounds = heading.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= innerHeight;
+  });
+  assert.equal(visible, true, 'Choosing Next must reveal the new lesson heading.');
+}
 try {
   browser = await chromium.launch({ headless: true });
   // Walk the actual delegated controls so lesson progression cannot pass while the board is unusable.
@@ -80,12 +108,16 @@ try {
     { width: 390, height: 844 },
   ]) {
     const { page, errors } = await openPage(viewport);
-    await step(page, 'welcome');
+    const greeting = await step(page, 'welcome');
+    assert.match(greeting[0], /hello|welcome/i);
+    assert.match(
+      greeting[0],
+      /Learner <Ace>/,
+      'The adviser should greet the actual player safely.',
+    );
     assert.equal(await page.locator('[data-action="confirm-reinforce"]').isDisabled(), true);
-    const guideBox = await page.locator('.tutorial-guide').boundingBox();
-    const boardBox = await page.locator('.board-grid').boundingBox();
-    assert.equal(await page.locator('.tutorial-action-column .tutorial-guide').count(), 1);
-    if (viewport.width > 1100) assert.ok(guideBox.width < boardBox.width / 2);
+    assert.equal(await page.locator('.tutorial-adviser .tutorial-guide').count(), 1);
+    assert.equal(await page.locator('.tutorial-action-column .tutorial-guide').count(), 0);
     assert.equal(await page.locator('.tutorial-visual,.tutorial-chapters').count(), 0);
     assert.equal(
       await page
@@ -100,6 +132,7 @@ try {
     });
     await clickAction(page, 'tutorial-next');
     await step(page, 'map');
+    await checkGuideVisible(page);
     await page.locator('.map-marker[data-code="ZA"] text').click();
     await step(page, 'reinforce');
     await page.evaluate(
@@ -114,21 +147,15 @@ try {
         fullPage: true,
       });
     assert.ok(guideVisible, JSON.stringify({ guideHeading, viewport }));
-    await page.locator('.tutorial-rule-details summary').click();
-    assert.match(
-      await page.locator('.tutorial-rule-details').innerText(),
-      /round finishes after every surviving player/,
-    );
-    assert.match(
-      await page.locator('.tutorial-rule-details').innerText(),
-      /4 in one and 2 in another/,
-    );
+    const reinforcementDialogue = await page.locator('.tutorial-dialogue-script').textContent();
+    assert.match(reinforcementDialogue, /round finishes after every surviving player/);
+    assert.match(reinforcementDialogue, /4 in one and 2 in another/);
     await page.screenshot({
       path: `.firebase/tutorial-reinforce-${viewport.width}.png`,
       fullPage: true,
       animations: 'disabled',
     });
-    // A shorter desktop window exercises the guide's own scrollbar rather than page scrolling.
+    // A shorter desktop window exercises the action scrollbar without moving the adviser.
     if (viewport.width > 1100) await page.setViewportSize({ ...viewport, height: 600 });
     // Adjusting soldiers redraws the board, but must retain the learner's place in the guide.
     for (const action of ['allocate-plus', 'allocate-minus', 'allocate-plus', 'allocate-plus']) {
@@ -136,26 +163,45 @@ try {
       await control.scrollIntoViewIfNeeded();
       const column = page.locator('.tutorial-action-column');
       const scrollBefore = await column.evaluate((node) => node.scrollTop);
-      if (viewport.width > 1100) assert.ok(scrollBefore > 0, 'Exercise a scrolled guide.');
       await control.click();
-      assert.equal(
-        await page.locator('.tutorial-rule-details').evaluate((node) => node.open),
-        true,
-        'Adjusting soldiers must not close Rules & examples.',
-      );
       assert.ok(
         Math.abs((await column.evaluate((node) => node.scrollTop)) - scrollBefore) <= 1,
         'Adjusting soldiers must not reset the tutorial column scroll.',
       );
     }
-    if (viewport.width > 1100) await page.setViewportSize(viewport);
-    await clickAction(page, 'confirm-reinforce');
-    await step(page, 'attack');
-    assert.equal(
-      await page.locator('.tutorial-rule-details').evaluate((node) => node.open),
-      false,
-      'A new lesson starts with its own collapsed rules.',
+    // Confirm while still scrolled: advancing the lesson must keep the action card in place.
+    const confirm = page.locator('[data-action="confirm-reinforce"]');
+    await confirm.scrollIntoViewIfNeeded();
+    const beforeConfirm = await actionPosition(page);
+    await confirm.click();
+    await step(page, 'attack', { read: false });
+    const afterConfirm = await actionPosition(page);
+    const naturalTop = afterConfirm.top + afterConfirm.offset;
+    // A shorter new lesson can force the scrollbar to an edge; accept only that unavoidable clamp.
+    const expectedTop = Math.min(
+      naturalTop,
+      Math.max(naturalTop - afterConfirm.maximum, beforeConfirm.top),
     );
+    assert.ok(
+      Math.abs(afterConfirm.top - expectedTop) <= 2,
+      'Confirming reinforcements must preserve the action card position: ' +
+        JSON.stringify({ viewport, beforeConfirm, afterConfirm, expectedTop }),
+    );
+    if (beforeConfirm.columnScrolls) {
+      assert.ok(
+        Math.abs(afterConfirm.windowY - beforeConfirm.windowY) <= 1,
+        'Confirming inside the desktop column must not move the page.',
+      );
+    }
+    assert.equal(
+      await page.evaluate(
+        () => document.activeElement === document.querySelector('.action-panel h2'),
+      ),
+      true,
+      'Keyboard focus should move to the updated action heading without scrolling.',
+    );
+    await prepareInstruction(page);
+    if (viewport.width > 1100) await page.setViewportSize(viewport);
     await page.locator('#attack-to').selectOption('GB');
     await clickAction(page, 'start-attack');
     await step(page, 'dice');
@@ -167,7 +213,7 @@ try {
     assert.doesNotMatch(await page.locator('.action-panel').innerText(), /Phase 1:/);
     await settled(page);
     await step(page, 'losses');
-    assert.match(await page.locator('.tutorial-guide').innerText(), /9 against 1/);
+    assert.match(await page.locator('.tutorial-dialogue-script').textContent(), /9 against 1/);
     await page.screenshot({
       path: `.firebase/tutorial-dice-${viewport.width}.png`,
       fullPage: true,
@@ -178,6 +224,8 @@ try {
       /South Africa lost 1; United Kingdom lost 1/,
     );
     await clickAction(page, 'tutorial-next');
+    await step(page, 'conquer');
+    await checkGuideVisible(page);
     await clickAction(page, 'roll');
     await settled(page);
     await step(page, 'conquest');
@@ -186,15 +234,55 @@ try {
       fullPage: true,
       animations: 'disabled',
     });
-    await clickAction(page, 'tutorial-next');
-    await step(page, 'transfer');
-    await clickAction(page, 'transfer');
+    if (viewport.width === 1440) {
+      const transferButtons = page.locator('[data-action="transfer"]');
+      assert.ok(await transferButtons.count(), 'Conquest must offer a transfer control.');
+      for (const button of await transferButtons.all())
+        assert.equal(await button.isEnabled(), true, 'Transfer must work directly after conquest.');
+      await page.locator('.action-panel [data-action="transfer"]').click();
+      await step(page, 'transfer');
+      await checkGuideVisible(page);
+      assert.equal(await page.locator('#transfer-from').isVisible(), true);
+    } else {
+      await clickAction(page, 'tutorial-next');
+      await step(page, 'transfer');
+      await checkGuideVisible(page);
+      await clickAction(page, 'transfer');
+    }
     await page.locator('#transfer-from').selectOption('GB');
     assert.equal(await page.locator('[data-action="confirm-transfer"]').isDisabled(), true);
     await page.locator('#transfer-from').selectOption('ZA');
     await page.locator('#transfer-to').selectOption('GB');
     await page.locator('#transfer-count').fill('2');
     await clickAction(page, 'confirm-transfer');
+    await step(page, 'diplomacy');
+    const armiesBeforePact = await page.locator('.country-row .army-count').allTextContents();
+    const diplomacy = page.locator('[data-action="diplomacy"]');
+    assert.match(await diplomacy.getAttribute('class'), /tutorial-target/);
+    await diplomacy.click();
+    await page.locator('#diplomacy-target').waitFor();
+    await page.locator('#diplomacy-target').selectOption('2');
+    await clickAction(page, 'propose-alliance');
+    await step(page, 'diplomacy-result');
+    assert.match(await page.locator('.diplomacy-pact').innerText(), /3 rounds remaining/);
+    assert.deepEqual(
+      await page.locator('.country-row .army-count').allTextContents(),
+      armiesBeforePact,
+      'A real practice pact must leave every army unchanged.',
+    );
+    if (viewport.width === 1440) {
+      await page.locator('.board-grid').evaluate((board) => {
+        window.scrollTo({
+          top: board.getBoundingClientRect().top + scrollY - 12,
+          behavior: 'instant',
+        });
+      });
+      await page.screenshot({
+        path: '.firebase/tutorial-dialogue-diplomacy.png',
+        animations: 'disabled',
+      });
+    }
+    await clickAction(page, 'tutorial-next');
     await step(page, 'end');
     await page.locator('.action-panel [data-action="end-turn"]').click();
     await step(page, 'bots');
@@ -205,7 +293,7 @@ try {
       await page.locator(`[data-action="allocate-plus"][data-code="${code}"]`).click();
     }
     await clickAction(page, 'confirm-reinforce');
-    await page.locator('#attack-to').selectOption('EG');
+    await page.locator('#attack-to').selectOption('CA');
     await clickAction(page, 'start-attack');
     await clickAction(page, 'stop-attack');
     await step(page, 'reports');
@@ -221,19 +309,8 @@ try {
     await page.locator('#settings-dialog').waitFor();
     await page.locator('#settings-dialog [data-action="motion"]').click();
     await page.keyboard.press('Escape');
-    await step(page, 'multiplayer');
-    assert.equal(
-      await page
-        .locator('.tutorial-guide')
-        .evaluate((node) => getComputedStyle(node).animationName),
-      'none',
-    );
-    await page.locator('#tutorial-room-code').fill('WRONG1');
-    await page.getByRole('button', { name: 'Join practice room' }).click();
-    assert.match(await page.locator('#tutorial-room-error').innerText(), /ABC234/);
-    await page.locator('#tutorial-room-code').fill('abc234');
-    await page.getByRole('button', { name: 'Join practice room' }).click();
     await step(page, 'complete');
+    assert.equal(await page.locator('#tutorial-room-form').count(), 0);
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       true,
@@ -260,13 +337,21 @@ try {
     await page.goto(origin + '/#how-to-play');
     await page.getByRole('link', { name: 'Start interactive tutorial' }).click();
     await step(page, 'welcome');
+    assert.equal(await page.locator('.tutorial-adviser').count(), 1);
+    assert.equal(
+      await page.evaluate(() =>
+        localStorage.getItem('meridian-tutorial-v1-new-player@example.invalid'),
+      ),
+      'completed',
+      'Replaying must retain completion and the adviser layout.',
+    );
     await clickAction(page, 'tutorial-skip');
     await page.waitForURL('**/#campaigns');
     assert.deepEqual(errors, []);
     console.log(
       /* prettier-ignore */ `PASS: ${
         viewport.width
-      }px new-player sign-in, complete guided practice, isolated saves/AI, room-code validation, skip and replay`,
+      }px new-player sign-in, complete guided practice, isolated saves/AI, real diplomacy, skip and replay`,
     );
     await page.close();
   }
@@ -294,7 +379,10 @@ try {
       .evaluate((node) => getComputedStyle(node).animationName),
     'none',
   );
-  assert.match(await reduced.page.locator('.tutorial-guide').innerText(), /9 against 1/);
+  assert.match(
+    await reduced.page.locator('.tutorial-dialogue-script').textContent(),
+    /9 against 1/,
+  );
   assert.deepEqual(reduced.errors, []);
   await clickAction(reduced.page, 'tutorial-skip');
   await reduced.page.close();

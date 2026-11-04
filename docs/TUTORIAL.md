@@ -1,13 +1,14 @@
 # Tutorial coverage
 
 The interactive tutorial covers the 26 numbered sections in the supplied
-`Instructions.txt`. A compact guide beside the game controls gives a short
-explanation and one task at a time. Further explanations appear under **Rules & examples**.
+`Instructions.txt`. An adviser welcomes the commander and types the explanations,
+rules and examples into a dialogue above the map. One practice task appears at a
+time; a pointing hand identifies its control and brings it into view when needed.
 
 | Item | Instruction                                                                                           | Tutorial lesson                                                   |
 | ---- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 1    | Control all ten countries against nine opponents                                                      | Your first command                                                |
-| 2    | Sign in, choose a country, random rivals and population-based starting armies                         | Your first command, including its expanded explanation            |
+| 1    | Control all ten countries against nine opponents                                                      | Welcome, Commander                                                |
+| 2    | Sign in, choose a country, random rivals and population-based starting armies                         | Welcome, Commander, including its examples                        |
 | 3    | Read every country's ownership and current soldier count                                              | Meet your battlefield                                             |
 | 4    | Turns, complete rounds and a random first commander                                                   | Build your next move, expanded explanation; Pass command          |
 | 5    | Round one has no reinforcements; attack with two soldiers or skip                                     | Build your next move; Pick your moment; Pass command              |
@@ -31,19 +32,25 @@ explanation and one task at a time. Further explanations appear under **Rules & 
 | 23   | The new country supplies reinforcements and can attack next turn; still one attack per turn           | Secure what you captured, expanded explanation; Know when to stop |
 | 24   | Optional attacks, skipping and waiting for later reinforcements                                       | Pass command                                                      |
 | 25   | Bots reinforce, transfer, attack or stop; decisions and battles remain visible in fast forward        | Read your opponents                                               |
-| 26   | Survive while owning any country; elimination removes future turns and reinforcements; own ten to win | A new foothold, expanded explanation; Your first command          |
+| 26   | Survive while owning any country; elimination removes future turns and reinforcements; own ten to win | A new foothold, expanded explanation; Welcome, Commander          |
 
 The existing game automatically garrisons a captured country with one earned
 soldier. The transfer lesson explains that the player chooses how many additional
 soldiers to move there, preserving the application's current capture rules.
 
+After transferring soldiers, the learner uses the real Diplomacy panel to offer
+an NPC a three-round pact. A second lesson explains the accepted pact, trust,
+expiry and betrayal, while preserving separate armies, normal turns and the
+single-commander victory condition. The tutorial does not require betrayal.
+
 The tutorial also teaches the Field reports and AI commentary tabs, pinning,
-settings, nicknames, saving, replay, sharing and multiplayer room codes.
+settings, nicknames, saving, replay and sharing. Multiplayer room codes are
+explained at completion without requiring a pretend room-code exercise.
 
 The practice board remains separate from campaign storage, multiplayer rooms and
 Gemini requests. Guided dice and battle animations use the normal game engine and
-animation preference. The guide has no additional decorative animations. Recorded
-losses and rewards remain hidden until the normal dice clock settles.
+animation preference. Dialogue and pointer motion respect reduced-motion settings.
+Recorded losses and rewards remain hidden until the normal dice clock settles.
 
 Run `node scripts/tutorial-browser-test.mjs` to check the complete desktop and
 mobile flow with fake accounts, plus reduced motion and save isolation. Ordinary

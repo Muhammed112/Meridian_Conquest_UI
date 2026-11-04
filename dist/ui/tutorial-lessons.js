@@ -1,9 +1,9 @@
 // Rule references match the numbered sections in the supplied Instructions.txt.
-// Keep longer explanations in optional details so the next action stays clear.
+// The adviser introduces each rule and example alongside one clear practice task.
 // The covers arrays map lessons to brief requirements; they do not grant gameplay permissions.
 export const tutorialLessons = {
   welcome: {
-    title: 'Your first command.',
+    title: 'Welcome, Commander.',
     summary: 'One world. Ten countries. Bring every country under your command to win.',
     task: 'Start the practice mission when you are ready.',
     next: 'Start practising',
@@ -158,6 +158,51 @@ export const tutorialLessons = {
     ],
     covers: [8, 22, 23],
   },
+  diplomacy: {
+    title: 'A temporary ally.',
+    summary:
+      'Diplomacy lets commanders agree to cooperate for three rounds. The pact' +
+      ' covers every country each ally owns.',
+    task: 'Open Diplomacy, choose an available rival commander, then select Offer three-round pact.',
+    notes: [
+      'An NPC weighs your military support, common threats and trust before' +
+        ' accepting. Your practice rivals have enough reason to cooperate.',
+      'Each commander can have one ally and propose one pact per turn. Deploy' +
+        ' all reinforcements and finish any battle before making an offer.',
+    ],
+    details: [
+      'For example, two commanders with two countries each can cooperate' +
+        ' against a rival who controls four. They still take separate turns' +
+        ' and choose their own attacks.',
+      'A pact does not combine armies, change dice or grant an extra attack.' +
+        ' Soldiers still transfer only between countries belonging to the same commander.',
+    ],
+    covers: [],
+  },
+  'diplomacy-result': {
+    title: 'Your pact is agreed.',
+    summary:
+      'Your ally accepted. The Diplomacy panel now shows your ally, three rounds' +
+      ' remaining and the trust between your commanders.',
+    task: 'Check the accepted pact in Diplomacy, then continue to end your turn.',
+    next: 'Continue the lesson',
+    notes: [
+      'The pact expires after three rounds. An ally being eliminated, or only' +
+        ' the two allies remaining, also ends it. One commander must still' +
+        ' control all ten countries to win.',
+      'Allied countries remain attackable. Attacking your ally breaks the pact' +
+        ' and lowers their trust, making future agreements harder.',
+    ],
+    details: [
+      'NPC allies generally avoid attacking you, but can betray an ally who' +
+        ' controls most of the board and threatens to win. Watch their decisions' +
+        ' in Field reports.',
+      'This practice offer changed only diplomacy. Both commanders kept their' +
+        ' armies, countries and normal reinforcements; your earlier attack' +
+        ' still used this turn’s single attack.',
+    ],
+    covers: [],
+  },
   end: {
     title: 'Pass command.',
     summary: 'Attacking is optional. End your turn when you are happy with your position.',
@@ -193,7 +238,7 @@ export const tutorialLessons = {
     summary:
       'Your two countries now supply four reinforcements. You can split them and' +
       ' attack from either country with at least 2 soldiers.',
-    task: 'Deploy all four soldiers, launch another attack, then select Stop attack & end turn.',
+    task: 'Deploy all four soldiers, attack a non-allied rival, then select Stop attack & end turn.',
     notes: [
       'Stopping immediately ends your turn. Both sides keep their remaining' +
         ' soldiers and the defender keeps the target.',
@@ -227,24 +272,17 @@ export const tutorialLessons = {
     ],
     covers: [],
   },
-  multiplayer: {
-    title: 'Bring your friends.',
-    summary: 'Create a room and share its six-character code, or use a friend’s code to join.',
-    task: 'Enter ABC234 below to join the practice room.',
-    notes: [
-      'The host waits for friends, then starts. Bots fill the remaining seats up to ten.',
-      'Keep the host’s room open for bot turns. This code is a tutorial example.',
-    ],
-    covers: [],
-  },
   complete: {
     title: 'Ready for your own campaign.',
     summary:
-      'You have reinforced, fought, captured, transferred and stopped an attack.' +
+      'You have reinforced, fought, captured, transferred, made an alliance and stopped an attack.' +
       ' Your next command is yours.',
     task: 'Create a real campaign or return to the war room.',
     notes: [
-      'In a real multiplayer room, everyone sees the same board and takes their own turn.',
+      'To play with friends, create a multiplayer room and share its six-character' +
+        ' code, or join with a friend’s code. Everyone sees the same board and takes their own turn.',
+      'The host starts once friends have joined. Bots fill any remaining seats' +
+        ' up to ten; keep the host’s room open for bot turns.',
       'Campaigns save to your signed-in account. My campaigns lets you resume,' +
         ' replay events or share a viewing-only snapshot.',
     ],

@@ -28,6 +28,7 @@ import { createNavigation } from './ui/navigation.js';
 import { createMapView } from './ui/map.js';
 import { syncMapLabels } from './ui/map-labels.js';
 import { createWelcomeDemo } from './ui/welcome-demo.js';
+import { createTutorialPresentation } from './ui/tutorial-presentation.js';
 import { createCampaignViews } from './ui/campaigns.js';
 import { createBattleViews } from './ui/battle.js';
 import { updateReportsCommentary, syncReportsDock } from './ui/reports.js';
@@ -218,6 +219,7 @@ const {
 } = createSettingsController(viewContext);
 const { map, theatre } = createMapView(viewContext);
 const welcomeDemo = createWelcomeDemo(map);
+const tutorialPresentation = createTutorialPresentation();
 const { welcome, filteredGames, campaignResults, dashboard, setupOptions, setup, auth } =
   createCampaignViews(viewContext);
 const { die, gameView, history } = createBattleViews(viewContext);
@@ -481,8 +483,6 @@ function route() {
   }
   if (view === 'tutorial') {
     document.getElementById('help-dialog').close();
-    if (!tutorial) tutorial = new TutorialSession(profile?.name);
-    tutorialProgress.mark(tutorialAccount(), 'offered');
   } else tutorial = null;
   multiplayer.route(view === 'multiplayer' ? id || '' : null);
   if (view !== 'history' && view !== 'watch') {
@@ -524,10 +524,13 @@ function route() {
   if (state.view === 'game' && !state.watch) queueMicrotask(runNPCs);
 }
 /** Render a presentation copy, then reconnect DOM observers to the replacement elements. */
-function render() {
+function render({ tutorialAction } = {}) {
   const focusedControl = captureFocus(app);
   const previousGuide = state.view === 'tutorial' ? captureTutorialGuideState(app) : null;
-  if (state.view === 'tutorial' && !tutorial) tutorial = new TutorialSession(profile?.name);
+  if (state.view === 'tutorial' && !tutorial) {
+    tutorial = new TutorialSession(profile?.name);
+    tutorialProgress.mark(tutorialAccount(), 'offered');
+  }
   if (
     state.view === 'campaigns' &&
     cloudReady &&
@@ -594,10 +597,11 @@ function render() {
                   ? auth(state.view)
                   : state.view === 'tutorial'
                     ? gameView(presentationGame(g, motionFrame), {
-                        guide: renderTutorialGuide(tutorial, motionFrame),
-                        showActions: !['reports', 'settings', 'multiplayer', 'complete'].includes(
-                          tutorial.step,
-                        ),
+                        guide: renderTutorialGuide(tutorial, motionFrame, {
+                          adviser: true,
+                        }),
+                        adviserGuide: true,
+                        showActions: !['reports', 'settings', 'complete'].includes(tutorial.step),
                       })
                     : state.view === 'game'
                       ? gameView(presentationGame(g, motionFrame))
@@ -610,13 +614,25 @@ function render() {
   welcomeDemo.mount(app, { reducedMotion: motionDirector.reducedMotion });
   if (motionFrame) motionDirector.mount(app, motionFrame, { onSettled: render });
   if (state.view === 'tutorial') {
-    syncTutorialControls(app, tutorial, motionFrame, previousGuide);
+    const actionPanelAnchored = syncTutorialControls(
+      app,
+      tutorial,
+      motionFrame,
+      previousGuide,
+      tutorialAction,
+    );
     const stepKey = tutorial.game.id + '/' + tutorial.step;
     if (!rollPending(motionFrame) && focusedTutorialStep !== stepKey) {
       focusedTutorialStep = stepKey;
-      const heading = app.querySelector('#tutorial-step-title');
+      const heading = app.querySelector(
+        actionPanelAnchored ? '.action-panel h2' : '#tutorial-step-title',
+      );
+      heading.setAttribute('tabindex', '-1');
       heading.focus({ preventScroll: true });
-      heading.closest('.tutorial-guide').scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      if (!actionPanelAnchored)
+        heading
+          .closest('.tutorial-guide')
+          .scrollIntoView({ block: 'nearest', behavior: 'instant' });
     }
   } else focusedTutorialStep = null;
   audioDirector.observe(
@@ -633,6 +649,7 @@ function render() {
   syncAIControls();
   syncNicknameControls();
   restoreFocus(app, focusedControl);
+  tutorialPresentation.mount(app, { reducedMotion: motionDirector.reducedMotion });
   document.title =
     state.view === 'game' && g
       ? `${g.name} — Meridian Conquest`

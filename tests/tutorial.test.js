@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TutorialSession, createTutorialProgress, tutorialSteps } from '../dist/tutorial.js';
 import { validateGameBoard } from '../dist/game-schema.js';
+import { allianceFor, trustFor } from '../dist/diplomacy.js';
 import { tutorialLessons } from '../dist/ui/tutorial-lessons.js';
 import { renderTutorialGuide } from '../dist/ui/tutorial.js';
 
@@ -22,6 +23,7 @@ test('practice uses the normal game rules and completes without editing another 
   assert.equal(game.countries.filter((country) => country.owner === 0).length, 1);
   assert.equal(session.allows('request-commentary'), false);
   assert.equal(session.allows('roll'), false);
+  assert.equal(session.allows('transfer'), false);
   session.advance();
   assert.equal(session.afterAction('select-country', { code: 'GB' }), false);
   session.afterAction('select-country', { code: 'ZA' });
@@ -49,9 +51,39 @@ test('practice uses the normal game rules and completes without editing another 
   assert.equal(captured.owner, 0);
   const reward = game.events.find((event) => event.type === 'conquest').reward;
   assert.equal(reward, Math.max(2, Math.floor(captured.value / 2)));
-  session.advance();
+  // The visible Transfer soldiers control must enter its lesson instead of being rejected after capture.
+  const boardBeforeOpeningTransfer = structuredClone(game);
+  assert.equal(session.allows('transfer'), true);
+  assert.equal(session.afterAction('transfer'), true);
+  assert.equal(session.step, 'transfer');
+  assert.deepEqual(
+    game,
+    boardBeforeOpeningTransfer,
+    'Opening the form must not move any soldiers.',
+  );
   act('confirm-transfer', () => engine.transfer('ZA', 'GB', 2));
   assert.equal(captured.army, 3);
+  assert.equal(session.step, 'diplomacy');
+  assert.equal(session.afterAction('diplomacy'), false);
+  assert.equal(session.afterAction('propose-alliance'), false);
+  // Learners must use the real offer, rather than advancing by merely opening the panel.
+  const boardBeforePact = structuredClone(game.countries);
+  act('propose-alliance', () => assert.equal(engine.proposeAlliance(2).accepted, true));
+  assert.equal(session.step, 'diplomacy-result');
+  assert.deepEqual(allianceFor(game, 0), {
+    ally: 2,
+    startedRound: game.round,
+    expiresRound: game.round + 3,
+    roundsLeft: 3,
+  });
+  assert.equal(trustFor(game, 2, 0), 53);
+  // Diplomacy must preserve the core armies, attack limit and ten-country victory condition.
+  assert.deepEqual(game.countries, boardBeforePact);
+  assert.equal(game.attackUsed, true);
+  assert.equal(game.winner, null);
+  assert.equal(session.allows('start-attack'), false);
+  assert.equal(session.advance(), true);
+  assert.equal(session.step, 'end');
   act('end-turn', () => engine.endTurn());
   assert.equal(session.step, 'bots');
   assert.equal(game.events.at(-1).type, 'decision');
@@ -60,7 +92,7 @@ test('practice uses the normal game rules and completes without editing another 
   assert.equal(engine.current, 0);
   assert.equal(game.budget, 4);
   act('confirm-reinforce', () => engine.reinforce({ ZA: 4 }));
-  act('start-attack', () => engine.startAttack('ZA', 'EG'));
+  act('start-attack', () => engine.startAttack('ZA', 'CA'));
   act('stop-attack', () => engine.stopAttack());
   assert.equal(session.step, 'reports');
   assert.match(
@@ -73,11 +105,19 @@ test('practice uses the normal game rules and completes without editing another 
   assert.equal(session.afterAction('close-settings'), false);
   session.afterAction('settings');
   session.afterAction('close-settings');
-  assert.equal(session.step, 'multiplayer');
-  assert.throws(() => session.joinPracticeRoom('WRONG1'), /ABC234/);
-  session.joinPracticeRoom(' abc234 ');
   assert.equal(session.step, 'complete');
   assert.equal(new TutorialSession().step, 'welcome');
+});
+
+// Opening diplomacy early could distract from the required action or let the learner skip a lesson.
+test('alliance offers are available only in the guided diplomacy lesson', () => {
+  const session = new TutorialSession();
+  for (const [index, step] of tutorialSteps.entries()) {
+    session.stepIndex = index;
+    assert.equal(session.allows('diplomacy'), step === 'diplomacy');
+    assert.equal(session.allows('propose-alliance'), step === 'diplomacy');
+  }
+  assert.equal(tutorialSteps.includes('multiplayer'), false);
 });
 
 // Instruction coverage must remain complete without making each visible tutorial task overwhelming.
