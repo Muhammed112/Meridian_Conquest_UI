@@ -61,6 +61,7 @@ export function renderReports(
   const active = tab === 'ai' ? 'ai' : 'field';
   const prefix = 'reports-' + escapeHTML(game.id);
   const collapsed = Boolean(dock.pinned && dock.collapsed);
+  const stopLabel = Number.isInteger(game.winner) ? 'Stop live sharing' : 'Stop sharing';
   return /* prettier-ignore */ `<section
     class="panel reports-panel ${dock.pinned ? 'is-pinned' : ''}"
     data-reports-panel
@@ -95,13 +96,14 @@ export function renderReports(
                   `${renderIcon('copy')} ${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share live link'}`,
                   'share',
                   'btn-sm',
-                  `data-id="${escapeHTML(game.id)}"`,
-                )}<span data-report-stop ${sharing.shared ? '' : 'hidden'}
+                  `data-id="${escapeHTML(game.id)}" ${sharing.stopping ? 'disabled' : ''}`,
+                )}<span data-report-stop ${sharing.shared || sharing.stopping ? '' : 'hidden'}
                   >${renderButton(
-                    Number.isInteger(game.winner) ? 'Stop live sharing' : 'Stop sharing',
+                    sharing.stopping ? 'Stopping…' : stopLabel,
                     'stop-sharing',
                     'btn-sm',
-                    `data-id="${escapeHTML(game.id)}"`,
+                    `data-id="${escapeHTML(game.id)}" data-sharing-label="${stopLabel}" ` +
+                      `aria-busy="${Boolean(sharing.stopping)}" ${sharing.stopping ? 'disabled' : ''}`,
                   )}</span
                 ></span
               >`
@@ -159,11 +161,17 @@ export function renderReports(
 }
 
 /** Reflect sharing changes without replacing the board, active dice or report scroll position. */
-export function syncReportSharing(root, liveShares) {
-  for (const controls of root.querySelectorAll('[data-report-sharing]'))
-    controls.querySelector('[data-report-stop]').hidden = !liveShares.isShared(
-      controls.dataset.reportSharing,
-    );
+export function syncReportSharing(root, liveShares, stoppingShares) {
+  for (const controls of root.querySelectorAll('[data-report-sharing]')) {
+    const id = controls.dataset.reportSharing,
+      stopping = Boolean(stoppingShares?.has(id)),
+      button = controls.querySelector('[data-action="stop-sharing"]');
+    controls.querySelector('[data-report-stop]').hidden = !stopping && !liveShares.isShared(id);
+    controls.querySelector('[data-action="share"]').disabled = stopping;
+    button.disabled = stopping;
+    button.textContent = stopping ? 'Stopping…' : button.dataset.sharingLabel;
+    button.setAttribute('aria-busy', String(stopping));
+  }
 }
 
 /** Fit the map above bounded reports while both remain in the same scrolling column. */

@@ -24,6 +24,7 @@ export async function connectCloud({
   onAIStatus = () => {},
   onLoadState = () => {},
   onShareError = () => {},
+  onSharingExpired = () => {},
   onCampaignState = () => {},
   config = firebaseConfig,
   aiSettings = aiConfig,
@@ -53,7 +54,12 @@ export async function connectCloud({
   const generateCommentary = createGeminiGenerator({ app, base, settings: aiSettings, loadSDK });
   let preparation = null;
   const savedReports = new Map();
-  const spectators = createSpectatorService({ db, sdk: dbSDK, getUser: () => user });
+  const spectators = createSpectatorService({
+    db,
+    sdk: dbSDK,
+    getUser: () => user,
+    onExpired: onSharingExpired,
+  });
   let preference = true;
   try {
     preference = globalThis.localStorage?.getItem('meridian-ai-commentary') !== 'off';

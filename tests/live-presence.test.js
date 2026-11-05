@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GameEngine } from '../dist/engine.js';
 import { createSpectatorService, spectatorPayload } from '../dist/spectators.js';
 import { watchLivePresence } from '../dist/live-presence.js';
+import { LIVE_SHARE_IDLE_MS } from '../dist/live-sharing.js';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -13,6 +14,7 @@ function fixture() {
     sessionId = 0,
     user = { uid: 'owner' };
   const timers = new Map(),
+    leaseTimers = new Map(),
     records = new Map(),
     listeners = new Set(),
     writes = [],
@@ -53,6 +55,13 @@ function fixture() {
         .filter(([path]) => path.split('/').length === 2)
         .map(([path, value]) => ({ id: path.split('/').at(-1), data: () => value })),
     }),
+    getDoc: async (path) => snapshot(path),
+    updateDoc: async (path, value) => {
+      if (!records.has(path)) throw new Error('Missing public share');
+      writes.push({ path, value });
+      records.set(path, { ...records.get(path), ...value });
+      emit();
+    },
     onSnapshot: (target, receive, onError) => {
       const listener = {
         path: target.path || target,
@@ -82,13 +91,30 @@ function fixture() {
       removeEventListener: (name, callback) => events.get(name)?.delete(callback),
     },
   };
-  const createService = () =>
-    createSpectatorService({ db: {}, sdk, getUser: () => user, presenceOptions });
+  const leaseOptions = {
+    now: () => time,
+    setTimeout: (callback, delay) => {
+      const id = ++timerId;
+      leaseTimers.set(id, { callback, next: time + delay });
+      return id;
+    },
+    clearTimeout: (id) => leaseTimers.delete(id),
+  };
+  const createService = (options = {}) =>
+    createSpectatorService({
+      db: {},
+      sdk,
+      getUser: () => user,
+      presenceOptions,
+      leaseOptions,
+      ...options,
+    });
   return {
     sdk,
     records,
     writes,
     timers,
+    leaseTimers,
     listeners,
     presenceOptions,
     createService,
@@ -100,12 +126,19 @@ function fixture() {
     async advance(milliseconds) {
       const end = time + milliseconds;
       while (true) {
-        const due = [...timers.values()].filter((timer) => timer.next <= end);
+        const due = [...timers.values(), ...leaseTimers.values()].filter(
+          (timer) => timer.next <= end,
+        );
         if (!due.length) break;
         time = Math.min(...due.map((timer) => timer.next));
         for (const timer of [...timers.values()])
           if (timer.next === time) {
             timer.next += timer.period;
+            timer.callback();
+          }
+        for (const [id, timer] of [...leaseTimers])
+          if (timer.next === time) {
+            leaseTimers.delete(id);
             timer.callback();
           }
         await flush();
@@ -155,7 +188,7 @@ test('visitors detect timeout while presence changes leave game payload callback
     game = GameEngine.create('Visitor timeout', 'ZA', true),
     statuses = [],
     games = [];
-  f.records.set('liveGames/' + game.id, { payload: spectatorPayload(game) });
+  f.records.set('liveGames/' + game.id, { payload: spectatorPayload(game), updatedAt: 100000 });
   f.user(null);
   const stop = service.watch(
     game.id,
@@ -362,7 +395,7 @@ test('failed presence writes do not interrupt sharing and failed revocation resu
 test('restoring an explicit share starts only the selected game and stop cancels its heartbeat', async () => {
   const f = fixture(),
     service = f.createService();
-  f.records.set('liveGames/shared', { ownerUid: 'owner' });
+  f.records.set('liveGames/shared', { ownerUid: 'owner', updatedAt: 100000 });
   service.setPlayingGame('shared');
   await service.restore();
   await flush();
@@ -402,4 +435,61 @@ test('card sharing records offline presence without interrupting a different liv
   service.reset();
   await flush();
   assert.equal(f.timers.size, 0);
+});
+
+// An open idle tab keeps sending presence, but those heartbeats must not keep its public link alive.
+test('five minutes of idle gameplay expires sharing without stopping or deleting the private game', async () => {
+  const f = fixture(),
+    expired = [],
+    service = f.createService({ onExpired: (id) => expired.push(id) }),
+    game = GameEngine.create('Idle open tab', 'ZA', true),
+    before = JSON.stringify(game);
+  service.setPlayingGame(game.id);
+  await service.start(game);
+  await f.advance(LIVE_SHARE_IDLE_MS);
+  assert.deepEqual(expired, [game.id]);
+  assert.equal(service.isShared(game.id), false);
+  assert.equal(f.records.get('liveGames/' + game.id).updatedAt, 100000);
+  assert.equal(f.timers.size, 0, 'Expired games must stop sending presence heartbeats.');
+  assert.equal(
+    JSON.stringify(game),
+    before,
+    'Lease expiry must not alter the private board or history.',
+  );
+  service.reset();
+});
+
+// Clicking, typing and scrolling count as activity; ordinary renders and timer ticks do not.
+test('real owner input renews the lease with bounded writes and stops renewing after departure', async () => {
+  const f = fixture(),
+    service = f.createService(),
+    game = GameEngine.create('Input lease', 'ZA', true);
+  service.setPlayingGame(game.id);
+  await service.start(game);
+  await f.advance(240000);
+  f.event('pointerdown');
+  await flush();
+  assert.equal(f.records.get('liveGames/' + game.id).updatedAt, 340000);
+  const touchCount = () => f.writes.filter((write) => Object.keys(write.value).length === 1).length;
+  for (let index = 0; index < 20; index++) {
+    f.event('keydown');
+    f.event('wheel');
+  }
+  await flush();
+  assert.equal(touchCount(), 1, 'Rapid input must not create one Firestore write per event.');
+  await f.advance(30000);
+  assert.equal(touchCount(), 2, 'The next heartbeat flushes recent input once.');
+  await f.advance(30000);
+  assert.equal(
+    service.isShared(game.id),
+    true,
+    'Recent input keeps the link alive past its original deadline.',
+  );
+  service.setPlayingGame(null);
+  f.event('pointerdown');
+  f.event('wheel');
+  await f.advance(LIVE_SHARE_IDLE_MS);
+  assert.equal(touchCount(), 2, 'Input on another page cannot renew an abandoned stream.');
+  assert.equal(service.isShared(game.id), false);
+  service.reset();
 });

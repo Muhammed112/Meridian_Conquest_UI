@@ -281,8 +281,12 @@ commentary. They cannot play turns or negotiate.
 The owner must keep the game open for play to continue. Leaving shows
 **The player has left the game** above the retained position. An abrupt close or
 network loss can take about 80 seconds to detect; switching tabs alone does not
-mark the player offline. **Stop sharing** revokes the live link without deleting
-the private campaign.
+mark the player offline. A live link expires after **five minutes of inactivity**,
+including when the game stays open without interaction. Moves and owner input
+renew sharing; background presence heartbeats do not. Share again to restart an
+expired stream. Firestore rules enforce the timeout even after a browser closes;
+the saved campaign stays intact. **Stop sharing** revokes the live link after
+Firebase confirms removal, with **Stopping…** feedback while it waits.
 
 Completed campaigns use **Share gameplay**. Their `#watch/` links contain a fixed
 copy of the final board, up to 60 recent events and saved commentary. They work

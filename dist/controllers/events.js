@@ -130,10 +130,28 @@ export function bindAppEvents(context) {
         return;
       }
       if (action === 'stop-sharing') {
-        await context.liveShares.stop(button.dataset.id);
-        if (context.state.view === 'game') syncReportSharing(document, context.liveShares);
-        else context.render();
-        context.notify('Live sharing stopped. The old link no longer shows your game.');
+        const id = button.dataset.id,
+          pending = (context.state.stoppingShares ??= new Set());
+        if (pending.has(id)) return;
+        pending.add(id);
+        try {
+          const stopping = context.liveShares.stop(id);
+          // Show progress immediately while Firestore confirms the deletion.
+          if (context.state.view === 'game')
+            syncReportSharing(document, context.liveShares, pending);
+          else context.render();
+          await stopping;
+          if (context.state.stoppingShares === pending)
+            context.notify('Live sharing stopped. The old link no longer shows your game.');
+        } finally {
+          pending.delete(id);
+          // Query the current controls: gameplay may have redrawn them while the request waited.
+          if (context.state.stoppingShares === pending) {
+            if (context.state.view === 'game')
+              syncReportSharing(document, context.liveShares, pending);
+            else context.render();
+          }
+        }
         return;
       }
       if (action === 'clear-campaign-filters') {

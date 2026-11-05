@@ -38,7 +38,12 @@ function fixture() {
       };
     },
   };
-  const service = createSpectatorService({ db: {}, sdk, getUser: () => user });
+  const service = createSpectatorService({
+    db: {},
+    sdk,
+    getUser: () => user,
+    leaseOptions: { now: () => 123 },
+  });
   return {
     service,
     records,
@@ -47,7 +52,8 @@ function fixture() {
     user: (value) => {
       user = value;
     },
-    emit: (value) => receive({ exists: () => Boolean(value), data: () => value }),
+    emit: (value) =>
+      receive({ exists: () => Boolean(value), data: () => value && { updatedAt: 123, ...value } }),
     fail: (error) => failure(error),
   };
 }
@@ -248,6 +254,7 @@ test('late restoration cannot revive a revoked share and still restores unrelate
   await f.service.publish(game);
   assert.equal(f.writes.length, writes, 'A normal save cannot recreate the revoked document.');
   assert.equal(f.records.has('liveGames/' + game.id), false);
+  new GameEngine(unrelated).event('decision', 'The other share remains active');
   await f.service.publish(unrelated);
   assert.equal(f.writes.length, writes + 1);
 });

@@ -1,4 +1,5 @@
 import { createRecordId } from './engine.js';
+import { timestampMilliseconds } from './live-sharing.js';
 
 const heartbeatMilliseconds = 30000;
 const expiryMilliseconds = 75000;
@@ -13,6 +14,8 @@ export function createLivePresence({
   clearInterval = globalThis.clearInterval,
   createSessionId = createRecordId,
   eventTarget = globalThis.window,
+  now = Date.now,
+  onActivity = () => {},
 }) {
   let current = null,
     desiredGame = null,
@@ -24,7 +27,37 @@ export function createLivePresence({
 
   /** Each visit has its own write queue, so an offline game cannot block a later stream. */
   function sessionFor(gameId, ownerUid) {
-    return { id: createSessionId(), gameId, ownerUid, pending: false, queue: Promise.resolve() };
+    return {
+      id: createSessionId(),
+      gameId,
+      ownerUid,
+      pending: false,
+      queue: Promise.resolve(),
+      lastActivityWrite: -Infinity,
+      activityPending: false,
+    };
+  }
+
+  /** Batch real input into at most one lease renewal per heartbeat; idle heartbeats do not renew. */
+  function renewActivity(session) {
+    if (current !== session || !session.activityPending || getUser()?.uid !== session.ownerUid)
+      return;
+    session.activityPending = false;
+    session.lastActivityWrite = now();
+    Promise.resolve()
+      .then(() => {
+        if (current === session && getUser()?.uid === session.ownerUid)
+          return onActivity(session.gameId);
+      })
+      .catch(() => {
+        // Activity tracking is best effort and must never block a player's next move.
+      });
+  }
+
+  function playerInput() {
+    if (!current) return;
+    current.activityPending = true;
+    if (now() - current.lastActivityWrite >= heartbeatMilliseconds) renewActivity(current);
   }
 
   /** Keep departure after any in-flight heartbeat; obsolete queued heartbeats cannot revive a tab. */
@@ -68,7 +101,10 @@ export function createLivePresence({
       current = sessionFor(desiredGame, uid);
       const session = current;
       write(session, true);
-      session.timer = setInterval(() => write(session, true), heartbeatMilliseconds);
+      session.timer = setInterval(() => {
+        write(session, true);
+        renewActivity(session);
+      }, heartbeatMilliseconds);
     } catch {
       // Missing browser capabilities should degrade to unknown, without affecting the campaign.
       leave();
@@ -102,17 +138,13 @@ export function createLivePresence({
         const method = desiredGame ? 'addEventListener' : 'removeEventListener';
         eventTarget[method]('pagehide', pageHidden);
         eventTarget[method]('pageshow', pageShown);
+        for (const name of ['pointerdown', 'keydown', 'wheel'])
+          eventTarget[method](name, playerInput, { passive: true });
         listening = Boolean(desiredGame);
       }
       reconcile();
     },
   };
-}
-
-/** Read server timestamps without trusting unresolved local estimates as a live heartbeat. */
-function timestampMilliseconds(value) {
-  if (typeof value?.toMillis === 'function') return value.toMillis();
-  return typeof value === 'number' ? value : NaN;
 }
 
 /** Observe independent tabs so leaving one browser cannot hide another active session. */

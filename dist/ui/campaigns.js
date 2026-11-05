@@ -84,19 +84,21 @@ export function createCampaignViews(context) {
 
   /** Active cards resume play; completed cards also expose replay and recorded-game sharing. */
   function gameCard(game, index) {
-    const { owned, map, liveShares } = context;
+    const { owned, map, liveShares, state } = context;
 
     const troops = owned(game).reduce((n, c) => n + c.army, 0),
       start = findCountry(game.start),
       completed = Number.isInteger(game.winner),
-      stopSharingButton = liveShares?.isShared(game.id)
-        ? renderButton(
-            completed ? 'Stop live sharing' : 'Stop sharing',
-            'stop-sharing',
-            'btn-sm',
-            `data-id="${escapeHTML(game.id)}"`,
-          )
-        : '';
+      stopping = Boolean(state?.stoppingShares?.has(game.id)),
+      stopSharingButton =
+        stopping || liveShares?.isShared(game.id)
+          ? renderButton(
+              stopping ? 'Stopping…' : completed ? 'Stop live sharing' : 'Stop sharing',
+              'stop-sharing',
+              'btn-sm',
+              `data-id="${escapeHTML(game.id)}" aria-busy="${stopping}" ${stopping ? 'disabled' : ''}`,
+            )
+          : '';
     return /* prettier-ignore */ `<article class="campaign-card"
       ><div class="campaign-art"
         >${map(game.countries, { mini: true })}<span
@@ -139,7 +141,8 @@ export function createCampaignViews(context) {
                     `${renderIcon('copy')} Share gameplay`,
                     'share',
                     '',
-                    `data-id="${escapeHTML(game.id)}" aria-label="Share gameplay" title="Share gameplay"`,
+                    `data-id="${escapeHTML(game.id)}" aria-label="Share gameplay" ` +
+                      `title="Share gameplay" ${stopping ? 'disabled' : ''}`,
                   )}${stopSharingButton}</div>`
               : stopSharingButton
           }<a href="#game/${game.id}" class="btn btn-primary btn-full"

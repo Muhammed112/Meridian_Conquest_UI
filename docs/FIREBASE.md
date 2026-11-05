@@ -52,7 +52,19 @@ The public projection contains the board, commander nicknames, battle state and 
 
 **Stop sharing** deletes only the public copy and makes its live link unavailable. The private campaign and full history are preserved. Completed campaign cards offer **Replay**, **Share gameplay** and **View results**. **Share gameplay** creates an embedded `#watch/` snapshot of the public final board and up to 60 recent events with saved commentary. Copying a completed recording does not start live publication or write to Firestore. Recorded links contain a standalone copy and cannot be revoked; **Stop live sharing** remains available to revoke any previously published live link. Multiplayer rooms are unchanged. Each published live update adds a Firestore write and visitor reads within Spark quotas; no Functions or billing upgrade is required. Public use requires the frontend, Firestore rules and the `liveGames.payload` index exemption to be deployed; a localhost URL cannot be opened from a friend's device.
 
-The local presence feature adds owner-written records under
+Live streams expire after **five minutes of inactivity**, even if the owner's game
+remains open. Game updates and owner input renew the public copy's `updatedAt` lease;
+input renewals are batched to at most one per 30 seconds. Presence heartbeats alone
+do not renew it. Visitors hide an expired board, and Firestore denies new public reads
+after the deadline even when the owner's browser is closed. The owner retains access
+to the expired public document; expiration does not schedule document deletion or
+change private saves. Only an explicit **Share live link** starts an expired stream
+again. Completed `#watch/` recordings are independent of this timeout.
+
+**Stop sharing** shows **Stopping…** while Firebase confirms deletion. Repeated
+requests are disabled during that wait; a failure restores the retry control.
+
+The presence feature adds owner-written records under
 `liveGames/{gameId}/presence/{sessionId}`. While an explicitly shared campaign is open,
 its tab sends a heartbeat every 30 seconds. Leaving the game, signing out or a successful
 page-exit update marks that tab offline. Visitors see **The player has left the game**
@@ -65,8 +77,9 @@ close or lost connection can take about 80 seconds to show. Each active shared t
 about two Firestore writes per minute, plus visitor reads, within the existing Spark quota.
 Presence never grants visitors gameplay writes or exposes account credentials.
 
-Publish the updated presence rules and frontend together to activate these notices on
-the public site. Older rules or clients retain the existing spectator view without presence.
+Publish the updated lease/presence rules and frontend together to activate expiration
+on the public site. Updating the frontend alone cannot revoke public database access.
+Older clients cannot bypass the server deadline, but their inactive controls may lag.
 Offline checks include `tests/spectators.test.js`, `tests/live-presence.test.js`,
 `scripts/spectator-browser-test.mjs`, and the isolated emulator's public-read/owner-write
 security tests. They do not create real accounts or publish real campaigns.

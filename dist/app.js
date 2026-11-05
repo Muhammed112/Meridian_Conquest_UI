@@ -288,6 +288,7 @@ const state = {
   replay: 0,
   reportTab: 'field',
   reportDock: { pinned: false, collapsed: false },
+  stoppingShares: new Set(),
   fast: false,
   npcNote: '',
   watch: null,
@@ -445,11 +446,11 @@ function watchLiveGame(id) {
   try {
     stopLiveWatch = cloud.spectators.watch(
       id,
-      (game) => {
+      (game, { expired = false } = {}) => {
         if (request !== liveRequest) return;
         const previous = state.watch;
         state.watch = game;
-        state.liveStatus = game ? 'live' : 'stopped';
+        state.liveStatus = expired ? 'expired' : game ? 'live' : 'stopped';
         if (
           game &&
           previous &&
@@ -487,6 +488,8 @@ function liveWatchNotice() {
         ? 'Connecting to the live game…'
         : state.liveStatus === 'stopped'
           ? 'This game is not being shared right now.'
+          : state.liveStatus === 'expired'
+            ? 'This live stream ended after five minutes of inactivity.'
           : 'The live game could not connect.'
   }</h1><p>Visitors can watch shared games. Only the signed-in player can make moves.</p>${
     state.liveStatus === 'connecting'
@@ -725,7 +728,7 @@ async function shareGame(g) {
     await cloud.spectators.start(g);
     live = true;
     if (state.view === 'campaigns') render();
-    else syncReportSharing(app, cloud.spectators);
+    else syncReportSharing(app, cloud.spectators, state.stoppingShares);
   }
   const url = /* prettier-ignore */ `${location.origin}${location.pathname}#${
     live
@@ -832,6 +835,12 @@ if (cloudEnabled) {
       syncNicknameControls();
     },
     onAIStatus: syncAIControls,
+    onSharingExpired() {
+      if (state.view === 'game' && cloud?.spectators)
+        syncReportSharing(app, cloud.spectators, state.stoppingShares);
+      else if (state.view === 'campaigns') render();
+      notify('Live sharing stopped after five minutes of inactivity. Share again to restart.');
+    },
     onCampaignState() {
       render();
     },
@@ -852,6 +861,7 @@ if (cloudEnabled) {
     },
     onSession(user, remote, ready) {
       if (accountId !== (user?.uid || null)) {
+        state.stoppingShares = new Set();
         gameSummary.reset();
         tutorial = null;
       }

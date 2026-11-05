@@ -64,6 +64,13 @@ Completed cards offer **Replay**, **Share gameplay** and **View results**. A car
 for an already public game retains its stop-sharing control so revocation remains
 available independently of the game's status.
 
+Live shares use a five-minute lease on the public copy's server `updatedAt` time.
+Game changes and throttled owner input renew it; presence heartbeats do not.
+Firestore rules deny expired visitor reads even after the owner closes the browser.
+Visitor timers also remove an already displayed board at its deadline. Expired
+copies remain owner-only until renewed by explicit sharing or deleted; the private
+campaign and standalone completed-game recordings are unaffected.
+
 A second device cannot silently overwrite a versioned save. Conflicts stop cloud
 writes for that campaign, keep the current local recovery data and offer an
 explicit reload. Loading a competing history first preserves the local branch in

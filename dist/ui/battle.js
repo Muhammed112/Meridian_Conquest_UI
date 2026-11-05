@@ -200,7 +200,10 @@ export function createBattleViews(context) {
         !state.watch &&
         !state.liveShareId &&
         game.mode !== 'multiplayer'
-          ? { shared: context.liveShares.isShared(game.id) }
+          ? {
+              shared: context.liveShares.isShared(game.id),
+              stopping: state.stoppingShares?.has(game.id),
+            }
           : null,
       badge: state.watch
         ? /* prettier-ignore */ `<span class="badge live" ${state.liveShareId ? 'data-live-presence-badge' : ''}>${

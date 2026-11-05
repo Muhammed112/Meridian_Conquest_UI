@@ -264,6 +264,13 @@ test('live links allow public viewing while only the campaign owner can publish 
   assert.equal((await getDoc(doc(owner, privatePath))).data().name, game.name);
 });
 
+test('a never-created live link returns a missing document for public visitors', async () => {
+  for (const viewer of [db(), db('stranger')]) {
+    const snapshot = await assertSucceeds(getDoc(doc(viewer, 'liveGames/never-shared')));
+    assert.equal(snapshot.exists(), false);
+  }
+});
+
 /** Publish through owner permissions so presence tests exercise the real sharing prerequisite. */
 async function publishPresenceGame() {
   const game = GameEngine.create('Live presence', 'ZA', true);
@@ -282,6 +289,70 @@ async function publishPresenceGame() {
   );
   return { owner, path, privatePath };
 }
+
+// Seed server age directly so lease coverage never depends on waiting five real minutes.
+async function ageLiveShare(path, minutes) {
+  await env.withSecurityRulesDisabled((context) =>
+    updateDoc(doc(context.firestore(), path), {
+      updatedAt: new Date(Date.now() - minutes * 60 * 1000),
+    }),
+  );
+}
+
+test('idle live links expire for visitors while the owner can restore access or revoke them', async () => {
+  const { owner, path, privatePath } = await publishPresenceGame();
+  await ageLiveShare(path, 4);
+  for (const viewer of [db(), db('stranger')]) {
+    await assertSucceeds(getDoc(doc(viewer, path)));
+  }
+  await ageLiveShare(path, 6);
+  for (const viewer of [db(), db('stranger')]) {
+    await assertFails(getDoc(doc(viewer, path)));
+  }
+  await assertSucceeds(getDoc(doc(owner, path)));
+  assert.equal(
+    (
+      await assertSucceeds(
+        getDocs(query(collection(owner, 'liveGames'), where('ownerUid', '==', 'owner'))),
+      )
+    ).size,
+    1,
+  );
+  await assertSucceeds(updateDoc(doc(owner, path), { updatedAt: serverTimestamp() }));
+  for (const viewer of [db(), db('stranger')]) {
+    await assertSucceeds(getDoc(doc(viewer, path)));
+  }
+  await ageLiveShare(path, 6);
+  await assertSucceeds(deleteDoc(doc(owner, path)));
+  assert.equal((await assertSucceeds(getDoc(doc(db(), path)))).exists(), false);
+  assert.equal((await assertSucceeds(getDoc(doc(owner, privatePath)))).exists(), true);
+});
+
+test('presence follows the parent lease while an expired share keeps owner cleanup and renewal', async () => {
+  const { owner, path } = await publishPresenceGame();
+  const presencePath = path + '/presence';
+  const sessionPath = presencePath + '/tab-one';
+  const session = doc(owner, sessionPath);
+  await assertSucceeds(
+    setDoc(session, { ownerUid: 'owner', online: true, updatedAt: serverTimestamp() }),
+  );
+  await ageLiveShare(path, 6);
+  for (const viewer of [db(), db('stranger')]) {
+    await assertFails(getDoc(doc(viewer, sessionPath)));
+    await assertFails(getDocs(collection(viewer, presencePath)));
+  }
+  await assertSucceeds(getDoc(session));
+  assert.equal((await assertSucceeds(getDocs(collection(owner, presencePath)))).size, 1);
+  await assertSucceeds(updateDoc(session, { online: false, updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(owner, path), { updatedAt: serverTimestamp() }));
+  for (const viewer of [db(), db('stranger')]) {
+    assert.equal((await assertSucceeds(getDoc(doc(viewer, sessionPath)))).data().online, false);
+    assert.equal((await assertSucceeds(getDocs(collection(viewer, presencePath)))).size, 1);
+  }
+  await ageLiveShare(path, 6);
+  await assertSucceeds(deleteDoc(session));
+  await assertSucceeds(deleteDoc(doc(owner, path)));
+});
 
 // Visitors need live connection state, but only the owner may announce a tab arriving or leaving.
 test('live presence is publicly readable only while shared and only the owner can update it', async () => {

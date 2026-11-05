@@ -96,7 +96,11 @@ History grows in separate documents instead of a single unbounded game document.
 Spectator payloads are bounded, allowlisted copies with at most 60 recent events.
 
 Private campaigns remain owner-only. Public viewing requires explicit sharing;
-revocation removes the public copy. A room code serves as an invitation.
+revocation removes the public copy. Live viewing expires five minutes after the last
+published activity, using the public document's server `updatedAt` timestamp. Owners
+can still read/manage expired copies, while visitor reads of both the board and its
+presence records are denied. No scheduled deletion or paid backend is required.
+A room code serves as an invitation.
 Multiplayer rules validate membership, controller, revisions, starting data and
 bounded move arithmetic. Outside combat, changed armies must belong to the active
 seat, owners stay fixed and totals remain conserved plus the exact reinforcement

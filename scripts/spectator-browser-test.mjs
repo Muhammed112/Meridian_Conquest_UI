@@ -5,6 +5,7 @@ import { startTestServer } from './lib/static-server.mjs';
 import { GameEngine } from '../dist/engine.js';
 import { decodeSnapshot } from '../dist/snapshots.js';
 import { spectatorPayload } from '../dist/spectators.js';
+import { LIVE_SHARE_IDLE_MS } from '../dist/live-sharing.js';
 
 // Keep the real spectator service, substituting only its Firestore transport with in-memory records.
 const fakeCloud = `
@@ -29,11 +30,24 @@ export async function connectCloud(callbacks) {
     limit: count => ({ type: 'limit', count }),
     serverTimestamp: () => Date.now(),
     getDocs: async target => snapshot(target, await window.readShares(target)),
+    getDoc: async path => snapshot(path, await window.readShares(path)),
+    updateDoc: async (path, record) => {
+      const existing = await window.readShares(path);
+      if (!existing) throw new Error('Missing public share');
+      return window.publishShare(path, { ...existing, ...record });
+    },
     setDoc: (path, record) => {
       if (path.includes('/presence/')) window.fixturePresenceOnline = record.online;
       return window.publishShare(path, record);
     },
-    deleteDoc: path => window.removeShare(path),
+    async deleteDoc(path) {
+      window.fixtureDeleteRequests = (window.fixtureDeleteRequests || 0) + 1;
+      if (window.fixtureHoldDelete)
+        await new Promise((resolve, reject) => {
+          window.fixturePendingDelete = { path, resolve, reject };
+        });
+      return window.removeShare(path);
+    },
     onSnapshot: (target, receive, fail) => {
       const subscription = ++nextSubscription;
       let active = true;
@@ -50,7 +64,9 @@ export async function connectCloud(callbacks) {
       };
     },
   };
-  const spectators = createSpectatorService({ db: {}, sdk, getUser: () => user });
+  const spectators = createSpectatorService({
+    db: {}, sdk, getUser: () => user, onExpired: callbacks.onSharingExpired,
+  });
   if (user) await spectators.restore();
   const service = {
     user, ready: true, spectators,
@@ -111,10 +127,11 @@ function readRecords(target) {
 }
 
 /** Connect an isolated owner/visitor browser to the shared in-memory document fixture. */
-async function openPage(owner, path, viewport, fixtureGame = game) {
+async function openPage(owner, path, viewport, fixtureGame = game, controlledClock = false) {
   const context = await browser.newContext({ viewport, ignoreHTTPSErrors: true });
   const page = await context.newPage(),
     errors = [];
+  if (controlledClock) await page.clock.install({ time: new Date() });
   page.on('pageerror', (error) => errors.push(error.message));
   page.setDefaultTimeout(15000);
   await page.addInitScript(
@@ -214,6 +231,18 @@ async function checkCampaignCardActions(page, campaign) {
     true,
     'Replay and the correct share action should fit above the main campaign action.',
   );
+}
+
+/** Release a held server acknowledgment, preserving the public record when the delete fails. */
+async function settleHeldDeletion(page, failed = false) {
+  await page.waitForFunction(() => Boolean(window.fixturePendingDelete));
+  await page.evaluate((failed) => {
+    const pending = window.fixturePendingDelete;
+    window.fixturePendingDelete = null;
+    window.fixtureHoldDelete = false;
+    if (failed) pending.reject(new Error('Fixture deletion failed.'));
+    else pending.resolve();
+  }, failed);
 }
 
 try {
@@ -401,13 +430,59 @@ try {
   assert.equal(await visitor.page.evaluate(() => window.privateWrites), 0);
   assert.equal(await visitor.page.evaluate(() => window.aiRequests), 0);
   assert.equal(await visitor.page.evaluate(() => localStorage.getItem('unrelated-save')), 'keep');
-  // Revocation from the reports header removes access without rebuilding the owner's map.
+  // Pending revocation remains visible through a full page redraw, and failure permits a retry.
   await owner.page.evaluate(() => {
+    window.fixtureHoldDelete = true;
+  });
+  await stopSharing.click();
+  const pendingStop = ownerReports.getByRole('button', { name: 'Stopping…', exact: true });
+  await pendingStop.waitFor();
+  assert.equal(await pendingStop.isDisabled(), true);
+  assert.equal(await shareLink.isDisabled(), true);
+  assert.equal(records.has('liveGames/' + game.id), true);
+  await owner.page.evaluate(() => {
+    location.hash = 'campaigns';
+  });
+  const pendingCardStop = owner.page
+    .locator('.campaign-card')
+    .getByRole('button', { name: 'Stopping…', exact: true });
+  await pendingCardStop.waitFor();
+  assert.equal(await pendingCardStop.isDisabled(), true);
+  await settleHeldDeletion(owner.page, true);
+  const cardStop = owner.page
+    .locator('.campaign-card')
+    .getByRole('button', { name: 'Stop sharing', exact: true });
+  await cardStop.waitFor();
+  assert.equal(await cardStop.isDisabled(), false);
+  assert.equal(records.has('liveGames/' + game.id), true);
+  await owner.page.evaluate((id) => {
+    location.hash = 'game/' + id;
+  }, game.id);
+  await stopSharing.waitFor();
+  assert.equal(await stopSharing.isDisabled(), false);
+  assert.equal(await shareLink.isDisabled(), false);
+
+  // Successful acknowledgment removes access without rebuilding the owner's map while waiting.
+  await owner.page.evaluate(() => {
+    window.fixtureHoldDelete = true;
     window.originalOwnerMap = document.querySelector('.world-map');
   });
   await stopSharing.click();
+  await pendingStop.waitFor();
+  assert.equal(await pendingStop.isDisabled(), true);
+  assert.equal(await shareLink.isDisabled(), true);
+  assert.equal(records.has('liveGames/' + game.id), true);
+  assert.equal(
+    await owner.page.evaluate(
+      () => window.originalOwnerMap === document.querySelector('.world-map'),
+    ),
+    true,
+  );
+  await settleHeldDeletion(owner.page);
+  await pendingStop.waitFor({ state: 'detached' });
   await stopSharing.waitFor({ state: 'detached' });
   assert.equal(await shareLink.count(), 1);
+  assert.equal(await shareLink.isDisabled(), false);
   assert.equal(
     await owner.page.evaluate(
       () => window.originalOwnerMap === document.querySelector('.world-map'),
@@ -530,12 +605,73 @@ try {
     await completedOwner.context.close();
     await recordedVisitor.context.close();
   }
+  // Advancing isolated browser clocks proves expiry without a real five-minute wait or cloud writes.
+  const idleGame = structuredClone(game);
+  idleGame.id = 'idle-expiry-browser';
+  const idleOwner = await openPage(
+    true,
+    '/#game/' + idleGame.id,
+    { width: 1440, height: 1000 },
+    idleGame,
+    true,
+  );
+  const idleShare = idleOwner.page.getByRole('button', { name: 'Share live link', exact: true });
+  await idleShare.click();
+  await idleOwner.page.getByRole('button', { name: 'Stop sharing', exact: true }).waitFor();
+  const idleVisitor = await openPage(
+    false,
+    '/#live/' + idleGame.id,
+    { width: 1440, height: 1000 },
+    idleGame,
+    true,
+  );
+  await idleVisitor.page.locator('.watch-notice').waitFor();
+  const idleCards = await openPage(
+    true,
+    '/#campaigns',
+    { width: 1440, height: 1000 },
+    idleGame,
+    true,
+  );
+  const idleCardStop = idleCards.page.getByRole('button', { name: 'Stop sharing', exact: true });
+  await idleCardStop.waitFor();
+  const originalPayload = records.get('liveGames/' + idleGame.id).payload;
+  await idleOwner.page.clock.runFor(LIVE_SHARE_IDLE_MS + 2000);
+  await idleOwner.page.getByRole('button', { name: 'Stop sharing', exact: true }).waitFor({
+    state: 'detached',
+  });
+  await idleVisitor.page.clock.runFor(LIVE_SHARE_IDLE_MS + 2000);
+  await idleCards.page.clock.runFor(LIVE_SHARE_IDLE_MS + 2000);
+  await idleCardStop.waitFor({ state: 'detached' });
+  await idleCards.page.getByRole('link', { name: /Resume campaign/ }).waitFor();
+  assert.deepEqual(idleCards.errors, []);
+  await idleCards.context.close();
+  const expiredHeading = idleVisitor.page.getByRole('heading', {
+    name: 'This live stream ended after five minutes of inactivity.',
+    exact: true,
+  });
+  await expiredHeading.waitFor();
+  assert.equal(await idleVisitor.page.locator('.world-map').count(), 0);
+  assert.equal(records.get('liveGames/' + idleGame.id).payload, originalPayload);
+  // An explicit reshare resumes viewing, while closing that owner still permits automatic expiry.
+  await idleShare.click();
+  await idleVisitor.page.locator('.watch-notice').waitFor();
+  await idleOwner.context.close();
+  await idleVisitor.page.clock.runFor(LIVE_SHARE_IDLE_MS + 2000);
+  await expiredHeading.waitFor();
+  assert.equal(await idleVisitor.page.evaluate(() => window.privateWrites), 0);
+  assert.equal(await idleVisitor.page.evaluate(() => window.aiRequests), 0);
+  assert.deepEqual(idleOwner.errors, []);
+  assert.deepEqual(idleVisitor.errors, []);
+  await idleVisitor.context.close();
   console.log(
     'PASS: anonymous visitors see live moves, delayed dice results and escaped' +
       ' AI reports; departure/rejoin updates the stream without rebuilding the board;' +
       ' switching tabs stays online; pagehide/pageshow updates presence; replay returns live;' +
       ' no visitor writes or AI requests;' +
+      ' pending revocation survives redraws, disables repeated actions and recovers on failure;' +
       ' reports-header sharing copies the live link and revokes access without rebuilding the map;' +
+      ' idle and closed-owner streams expire after five minutes and require explicit resharing;' +
       ' completed games share private-field-free recorded links with replay and AI reports.',
   );
 } finally {

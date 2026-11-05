@@ -1,6 +1,12 @@
 import { validateGameBoard, validateGameEvent } from './game-schema.js';
 import { normalizeCampaignCountries } from './country-compatibility.js';
 import { createLivePresence, watchLivePresence } from './live-presence.js';
+import {
+  LIVE_SHARE_IDLE_MS,
+  timestampMilliseconds,
+  liveShareExpiresAt,
+  isLiveShareFresh,
+} from './live-sharing.js';
 
 const gameFields = [
   'id',
@@ -164,12 +170,34 @@ export function readSpectatorGame(payload) {
 }
 
 /** Publish owner-authorized copies and provide read-only subscriptions for anonymous visitors. */
-export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} }) {
+export function createSpectatorService({
+  db,
+  sdk,
+  getUser,
+  presenceOptions = {},
+  leaseOptions = {},
+  onExpired = () => {},
+}) {
+  const {
+    now = Date.now,
+    setTimeout = globalThis.setTimeout,
+    clearTimeout = globalThis.clearTimeout,
+  } = leaseOptions;
   const active = new Set();
   // Keep successful remote writes separate from optimistic clicks so failures remain retryable.
   const confirmedShares = new Set();
   const sharingChanges = new Map();
-  const presence = createLivePresence({ db, sdk, getUser, ...presenceOptions });
+  const confirmedExpiry = new Map(),
+    leases = new Map(),
+    lastPayload = new Map(),
+    expired = new Set();
+  const presence = createLivePresence({
+    db,
+    sdk,
+    getUser,
+    ...presenceOptions,
+    onActivity: activity,
+  });
   let playingGame = null;
   let generation = 0,
     queue = Promise.resolve();
@@ -189,11 +217,70 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
   }
   const isLatestChange = (id, change) =>
     isCurrentSession(change) && sharingChanges.get(id) === change;
+  function cancelLease(id) {
+    clearTimeout(leases.get(id)?.timer);
+    leases.delete(id);
+  }
+  function expireShare(id) {
+    const hadShare = active.has(id) || confirmedShares.has(id);
+    cancelLease(id);
+    active.delete(id);
+    confirmedShares.delete(id);
+    confirmedExpiry.delete(id);
+    lastPayload.delete(id);
+    expired.add(id);
+    beginSharingChange(id);
+    syncPlaying();
+    if (hadShare) onExpired(id);
+  }
+  /** Check the shared document before ending a lease another owner tab may have renewed. */
+  function armLease(id, expiresAt, session = currentSession()) {
+    cancelLease(id);
+    const entry = { expiresAt, session, timer: null };
+    leases.set(id, entry);
+    const current = () => leases.get(id) === entry && isCurrentSession(session);
+    const schedule = () => {
+      entry.timer = setTimeout(check, Math.max(0, entry.expiresAt - now()));
+      entry.timer?.unref?.();
+    };
+    async function check() {
+      if (!current()) return;
+      if (entry.expiresAt > now()) return schedule();
+      try {
+        const read = sdk.getDocFromServer ?? sdk.getDoc,
+          snapshot = typeof read === 'function' ? await read(target(id)) : null;
+        if (!current()) return;
+        const record = snapshot?.exists() ? snapshot.data() : null;
+        if (record?.ownerUid === session.uid && isLiveShareFresh(record, now())) {
+          confirmedExpiry.set(id, liveShareExpiresAt(record));
+          armLease(id, liveShareExpiresAt(record), session);
+          return;
+        }
+      } catch {
+        // A failed freshness check cannot extend public access beyond its last known deadline.
+      }
+      if (current()) expireShare(id);
+    }
+    schedule();
+  }
+  const hasFreshLease = (id) => (leases.get(id)?.expiresAt ?? -Infinity) > now();
+  function confirmPublication(id, session) {
+    confirmedShares.add(id);
+    const expiresAt = now() + LIVE_SHARE_IDLE_MS;
+    confirmedExpiry.set(id, expiresAt);
+    if (active.has(id)) armLease(id, expiresAt, session);
+  }
   /** Only the latest action may restore controls after a failed request. */
   function restoreConfirmedShare(id, change) {
     if (!isLatestChange(id, change)) return;
-    if (confirmedShares.has(id)) active.add(id);
-    else active.delete(id);
+    if (confirmedShares.has(id)) {
+      if (!(confirmedExpiry.get(id) > now())) return expireShare(id);
+      active.add(id);
+      armLease(id, confirmedExpiry.get(id));
+    } else {
+      active.delete(id);
+      cancelLease(id);
+    }
     syncPlaying();
   }
   /** Serialize sharing/revocation and reject queued work from an earlier account session. */
@@ -210,11 +297,12 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     return next;
   }
   /** Capture this public board before queueing so later gameplay cannot alter the pending copy. */
-  function publish(game) {
+  function publish(game, explicit = false) {
     const id = game.id,
       payload = spectatorPayload(game);
     return write(async (session) => {
-      if (!active.has(id)) return;
+      if (!active.has(id) || (!explicit && (!hasFreshLease(id) || lastPayload.get(id) === payload)))
+        return;
       await sdk.setDoc(target(id), {
         version: 1,
         ownerUid: session.uid,
@@ -222,7 +310,26 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
         payload,
         updatedAt: sdk.serverTimestamp(),
       });
-      if (isCurrentSession(session)) confirmedShares.add(id);
+      if (isCurrentSession(session) && (explicit || !expired.has(id))) {
+        if (explicit) expired.delete(id);
+        lastPayload.set(id, payload);
+        confirmPublication(id, session);
+      }
+    });
+  }
+  /** Real owner input renews a current share without rewriting its campaign snapshot. */
+  function activity(id) {
+    if (
+      typeof sdk.updateDoc !== 'function' ||
+      playingGame !== id ||
+      !active.has(id) ||
+      !hasFreshLease(id)
+    )
+      return Promise.resolve();
+    return write(async (session) => {
+      if (playingGame !== id || !active.has(id) || !hasFreshLease(id)) return;
+      await sdk.updateDoc(target(id), { updatedAt: sdk.serverTimestamp() });
+      if (isCurrentSession(session) && !expired.has(id)) confirmPublication(id, session);
     });
   }
   return {
@@ -238,6 +345,10 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
       active.clear();
       confirmedShares.clear();
       sharingChanges.clear();
+      for (const id of leases.keys()) cancelLease(id);
+      confirmedExpiry.clear();
+      lastPayload.clear();
+      expired.clear();
       playingGame = null;
       syncPlaying();
     },
@@ -251,9 +362,18 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
       );
       if (token !== generation || uid !== getUser()?.uid) return;
       for (const record of records.docs) {
-        if (record.data().ownerUid !== uid || sharingChanges.has(record.id)) continue;
+        const data = record.data();
+        if (
+          data.ownerUid !== uid ||
+          sharingChanges.has(record.id) ||
+          !isLiveShareFresh(data, now())
+        )
+          continue;
         active.add(record.id);
         confirmedShares.add(record.id);
+        if (typeof data.payload === 'string') lastPayload.set(record.id, data.payload);
+        confirmedExpiry.set(record.id, liveShareExpiresAt(data));
+        armLease(record.id, liveShareExpiresAt(data));
       }
       syncPlaying();
     },
@@ -261,9 +381,10 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     async start(game) {
       const id = game.id,
         change = beginSharingChange(id);
+      cancelLease(id);
       active.add(id);
       try {
-        await publish(game);
+        await publish(game, true);
         if (!isLatestChange(id, change)) return;
         syncPlaying();
         if (playingGame !== id) presence.markOffline(id);
@@ -274,8 +395,9 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     },
     /** Update an already shared campaign; ordinary saves never opt a new game in. */
     async publish(game) {
-      return active.has(game.id) ? publish(game) : Promise.resolve();
+      return active.has(game.id) && hasFreshLease(game.id) ? publish(game) : Promise.resolve();
     },
+    activity,
     /**
      * Disable automatic publication before deleting the mirror, restoring retry controls on
      * failure.
@@ -284,10 +406,15 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
       const change = beginSharingChange(id);
       // Disable publication immediately so already queued saves cannot recreate a revoked share.
       active.delete(id);
+      cancelLease(id);
       syncPlaying();
       return write(async (session) => {
         await sdk.deleteDoc(target(id));
-        if (isCurrentSession(session)) confirmedShares.delete(id);
+        if (isCurrentSession(session)) {
+          confirmedShares.delete(id);
+          confirmedExpiry.delete(id);
+          lastPayload.delete(id);
+        }
       }).catch((error) => {
         restoreConfirmedShare(id, change);
         throw error;
@@ -295,16 +422,63 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     },
     /** Observe one public game; a missing document signals revoked sharing. */
     watch(id, onChange, onError, onPresence = () => {}) {
+      let stopped = false,
+        timer,
+        newest = -Infinity,
+        deadline = NaN,
+        showingExpired = false;
+      function showExpired() {
+        if (stopped || showingExpired) return;
+        showingExpired = true;
+        onChange(null, { expired: true });
+      }
+      function scheduleExpiry() {
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => {
+            if (stopped) return;
+            if (deadline > now()) scheduleExpiry();
+            else showExpired();
+          },
+          Math.max(0, deadline - now()),
+        );
+        timer?.unref?.();
+      }
       const stopGame = sdk.onSnapshot(
         target(id),
         (snapshot) => {
+          if (stopped) return;
           try {
-            onChange(snapshot.exists() ? readSpectatorGame(snapshot.data().payload) : null);
+            if (!snapshot.exists()) {
+              clearTimeout(timer);
+              showingExpired = false;
+              onChange(null);
+              return;
+            }
+            const record = snapshot.data(),
+              timestamp = timestampMilliseconds(record.updatedAt);
+            if (!Number.isFinite(timestamp)) {
+              if (newest === -Infinity) showExpired();
+              return;
+            }
+            if (timestamp < newest) return;
+            clearTimeout(timer);
+            newest = timestamp;
+            deadline = liveShareExpiresAt(record);
+            if (!isLiveShareFresh(record, now())) return showExpired();
+            const game = readSpectatorGame(record.payload);
+            showingExpired = false;
+            onChange(game);
+            scheduleExpiry();
           } catch (error) {
             onError(error);
           }
         },
-        onError,
+        (error) => {
+          if (stopped) return;
+          if (deadline <= now()) showExpired();
+          else onError(error);
+        },
       );
       const stopPresence = watchLivePresence({
         db,
@@ -314,6 +488,8 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
         ...presenceOptions,
       });
       return () => {
+        stopped = true;
+        clearTimeout(timer);
         stopGame();
         stopPresence();
       };

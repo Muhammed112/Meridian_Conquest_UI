@@ -440,6 +440,11 @@ service cloud.firestore {
     }
     // Sharing publishes a separate, opt-in copy. Private campaigns stay owner-only.
     match /liveGames/{gameId} {
+      // Server time revokes idle links even if the owner's browser never sends a final write.
+      function freshShare(data) {
+        return data.updatedAt is timestamp
+          && request.time < data.updatedAt + duration.value(5, 'm');
+      }
       function validShare() {
         let d = request.resource.data;
         return d.keys().hasOnly(['version','ownerUid','gameId','payload','updatedAt'])
@@ -449,7 +454,8 @@ service cloud.firestore {
           && d.updatedAt == request.time
           && exists(/databases/$(database)/documents/users/$(request.auth.uid)/games/$(gameId));
       }
-      allow get: if true;
+      // Missing links still return a missing snapshot after manual revocation.
+      allow get: if resource == null || owner(resource.data.ownerUid) || freshShare(resource.data);
       // Anonymous visitors get a known share by ID; only an owner may query their own opt-ins.
       allow list: if signedIn() && resource.data.ownerUid == request.auth.uid;
       allow create: if signedIn() && validShare();
@@ -473,8 +479,10 @@ service cloud.firestore {
             && d.ownerUid == request.auth.uid && d.online is bool
             && d.updatedAt == request.time;
         }
-        // Removing the public parent also revokes access to any remaining heartbeat records.
-        allow get, list: if sharedGameExists();
+        // A presence heartbeat cannot extend its parent stream's public viewing lease.
+        allow get, list: if sharedGameExists()
+          && (ownsSharedGame()
+            || freshShare(get(/databases/$(database)/documents/liveGames/$(gameId)).data));
         allow create: if ownsSharedGame() && validPresence();
         allow update: if ownsSharedGame() && validPresence()
           && request.resource.data.ownerUid == resource.data.ownerUid;
