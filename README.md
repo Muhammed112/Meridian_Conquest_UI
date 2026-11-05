@@ -19,14 +19,14 @@ The application is deployed on Vercel and uses Firebase Authentication, Cloud
 Firestore and Firebase AI Logic. Firebase remains on the free Spark plan; the
 deployment does not use Cloud Functions or a personal Gemini API key.
 
-The latest application release, published on **5 November 2026**, is commit
-[`c0841e1`](https://github.com/Muhammed112/Meridian_Conquest_UI/commit/c0841e1).
+The latest application release was published on **5 November 2026**.
 It includes the opening turn-order preview, **Alliance** label, compact action
 panels, updated report sharing and live-view presence notices. Its matching
 Firestore rules are deployed. The release also fixes tutorial typing timing and
-passes the application and Firestore checks in GitHub Actions.
+prevents delayed sharing restoration or earlier failed requests from undoing
+Stop sharing. Application and Firestore checks run in GitHub Actions.
 
-Release checks passed formatting, lint, **273 unit tests** and **18 Firestore
+Release checks passed formatting, lint, **281 unit tests** and **18 Firestore
 permission tests**. Post-deployment checks matched 304 non-audio public files to
 the local source, confirmed eight private paths were unavailable, and checked the
 homepage and opening-order preview in a browser. The opening-order deployment

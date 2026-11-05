@@ -52,6 +52,28 @@ function fixture() {
   };
 }
 
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
+
+// Capture the remote snapshot when restore begins, then let the test deliver that old snapshot.
+function delayRestore(f) {
+  const delivery = deferred(),
+    restoring = f.service.restore(() => {
+      const snapshot = f.sdk.getDocs();
+      return delivery.promise.then(() => snapshot);
+    });
+  return async () => {
+    delivery.resolve();
+    await restoring;
+  };
+}
+
 // Sharing must expose only an intentional gameplay snapshot, with stable IDs and bounded recent
 // history.
 test(
@@ -207,6 +229,176 @@ test('publishing is opt-in, survives account restoration, and stops when sharing
   assert.equal(f.service.isShared(game.id), false);
 });
 
+// Sign-in restoration can finish after the owner has already stopped one of its old shares.
+test('late restoration cannot revive a revoked share and still restores unrelated games', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Revoked during sign-in', 'ZA', true),
+    unrelated = GameEngine.create('Still shared', 'ZA', true);
+  await f.service.start(game);
+  await f.service.start(unrelated);
+  f.service.reset();
+  const finishRestore = delayRestore(f);
+  await f.service.start(game);
+  await f.service.stop(game.id);
+  await finishRestore();
+
+  assert.equal(f.service.isShared(game.id), false);
+  assert.equal(f.service.isShared(unrelated.id), true);
+  const writes = f.writes.length;
+  await f.service.publish(game);
+  assert.equal(f.writes.length, writes, 'A normal save cannot recreate the revoked document.');
+  assert.equal(f.records.has('liveGames/' + game.id), false);
+  await f.service.publish(unrelated);
+  assert.equal(f.writes.length, writes + 1);
+});
+
+test('the owner can explicitly share again after revocation and a delayed restore', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Share again', 'ZA', true);
+  await f.service.start(game);
+  f.service.reset();
+  const finishRestore = delayRestore(f);
+  await f.service.start(game);
+  await f.service.stop(game.id);
+  await f.service.start(game);
+  await finishRestore();
+
+  assert.equal(f.service.isShared(game.id), true);
+  new GameEngine(game).event('decision', 'An explicitly shared later turn');
+  await f.service.publish(game);
+  assert.match(f.records.get('liveGames/' + game.id).payload, /An explicitly shared later turn/);
+});
+
+for (const uid of ['owner', 'other']) {
+  test(`a reset discards an old restoration before account ${uid} shares again`, async () => {
+    const f = fixture(),
+      oldGame = GameEngine.create('Old account game', 'ZA', true),
+      currentGame = GameEngine.create('Current account game', 'ZA', true);
+    await f.service.start(oldGame);
+    f.service.reset();
+    const finishRestore = delayRestore(f);
+    f.service.reset();
+    f.user({ uid });
+    await f.service.start(currentGame);
+    await finishRestore();
+
+    assert.equal(f.service.isShared(oldGame.id), false);
+    assert.equal(f.service.isShared(currentGame.id), true);
+    const writes = f.writes.length;
+    await f.service.publish(oldGame);
+    assert.equal(f.writes.length, writes);
+    assert.equal(f.records.get('liveGames/' + currentGame.id).ownerUid, uid);
+  });
+}
+
+// An older failure must not undo a newer successful revocation of the same share.
+test('an overlapping failed stop cannot re-enable sharing after a later stop succeeds', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Overlapping stops', 'ZA', true),
+    entered = deferred(),
+    deletion = deferred(),
+    deleteDoc = f.sdk.deleteDoc;
+  await f.service.start(game);
+  let deletions = 0;
+  f.sdk.deleteDoc = async (path) => {
+    if (++deletions === 1) {
+      entered.resolve();
+      return deletion.promise;
+    }
+    return deleteDoc(path);
+  };
+  const firstStop = f.service.stop(game.id),
+    firstFailure = assert.rejects(firstStop, /offline/);
+  await entered.promise;
+  const laterStop = f.service.stop(game.id);
+  deletion.reject(new Error('offline'));
+  await firstFailure;
+  await laterStop;
+
+  assert.equal(f.service.isShared(game.id), false);
+  const writes = f.writes.length;
+  await f.service.publish(game);
+  assert.equal(f.writes.length, writes);
+  assert.equal(f.records.has('liveGames/' + game.id), false);
+});
+
+// Repeated clicks share one confirmed remote state; optimistic changes are not a success baseline.
+test('overlapping failed starts leave an initially private game private', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Overlapping starts fail', 'ZA', true),
+    entered = deferred(),
+    publication = deferred();
+  let publications = 0;
+  f.sdk.setDoc = async () => {
+    if (++publications === 1) {
+      entered.resolve();
+      await publication.promise;
+    }
+    throw new Error('offline');
+  };
+  const firstFailure = assert.rejects(f.service.start(game), /offline/);
+  await entered.promise;
+  const laterFailure = assert.rejects(f.service.start(game), /offline/);
+  publication.resolve();
+  await Promise.all([firstFailure, laterFailure]);
+
+  assert.equal(f.service.isShared(game.id), false);
+  assert.equal(f.records.has('liveGames/' + game.id), false);
+});
+
+test('overlapping failed stops keep an existing share available to retry', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Overlapping stops fail', 'ZA', true),
+    entered = deferred(),
+    deletion = deferred();
+  await f.service.start(game);
+  let deletions = 0;
+  f.sdk.deleteDoc = async () => {
+    if (++deletions === 1) {
+      entered.resolve();
+      await deletion.promise;
+    }
+    throw new Error('offline');
+  };
+  const firstFailure = assert.rejects(f.service.stop(game.id), /offline/);
+  await entered.promise;
+  const laterFailure = assert.rejects(f.service.stop(game.id), /offline/);
+  deletion.resolve();
+  await Promise.all([firstFailure, laterFailure]);
+
+  assert.equal(f.service.isShared(game.id), true);
+  assert.equal(f.records.has('liveGames/' + game.id), true);
+});
+
+// A rejected write from the previous session must not roll back the current account's opt-in.
+test('a failed old-account start cannot remove a new-account share of the same game', async () => {
+  const f = fixture(),
+    game = GameEngine.create('Share across accounts', 'ZA', true),
+    entered = deferred(),
+    publication = deferred(),
+    setDoc = f.sdk.setDoc;
+  let publications = 0;
+  f.sdk.setDoc = async (path, value) => {
+    if (++publications === 1) {
+      entered.resolve();
+      return publication.promise;
+    }
+    return setDoc(path, value);
+  };
+  const oldStart = f.service.start(game),
+    oldFailure = assert.rejects(oldStart, /offline/);
+  await entered.promise;
+  f.service.reset();
+  f.user({ uid: 'other' });
+  const currentStart = f.service.start(game);
+  publication.reject(new Error('offline'));
+  await oldFailure;
+  await currentStart;
+
+  assert.equal(f.service.isShared(game.id), true);
+  assert.equal(f.records.get('liveGames/' + game.id).ownerUid, 'other');
+});
+
 // Watching must work without an account while distinguishing removal from invalid or failed live
 // data.
 test('visitors can subscribe without signing in and invalid data reaches the error callback', () => {
@@ -249,11 +441,20 @@ test('signed-out publishing and old-account queued writes cannot publish as anot
 // sharing stopped.
 test('failed revocation keeps the stop-sharing control available to retry', async () => {
   const f = fixture(),
-    game = GameEngine.create('Stop retry', 'ZA', true);
+    game = GameEngine.create('Stop retry', 'ZA', true),
+    deleteDoc = f.sdk.deleteDoc;
   await f.service.start(game);
   f.sdk.deleteDoc = async () => {
     throw new Error('offline');
   };
   await assert.rejects(f.service.stop(game.id), /offline/);
   assert.equal(f.service.isShared(game.id), true);
+  assert.equal(f.records.has('liveGames/' + game.id), true);
+  f.sdk.deleteDoc = deleteDoc;
+  await f.service.stop(game.id);
+  assert.equal(f.service.isShared(game.id), false);
+  const writes = f.writes.length;
+  await f.service.publish(game);
+  assert.equal(f.writes.length, writes);
+  assert.equal(f.records.has('liveGames/' + game.id), false);
 });

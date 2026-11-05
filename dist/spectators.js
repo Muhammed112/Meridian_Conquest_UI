@@ -166,6 +166,9 @@ export function readSpectatorGame(payload) {
 /** Publish owner-authorized copies and provide read-only subscriptions for anonymous visitors. */
 export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} }) {
   const active = new Set();
+  // Keep successful remote writes separate from optimistic clicks so failures remain retryable.
+  const confirmedShares = new Set();
+  const sharingChanges = new Map();
   const presence = createLivePresence({ db, sdk, getUser, ...presenceOptions });
   let playingGame = null;
   let generation = 0,
@@ -175,33 +178,51 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     if (!/^[\w-]{1,60}$/.test(id || '')) throw new Error('Invalid live game link.');
     return sdk.doc(db, 'liveGames', id);
   };
+  const currentSession = () => ({ generation, uid: getUser()?.uid });
+  const isCurrentSession = (session) =>
+    session.generation === generation && session.uid === getUser()?.uid;
+  /** Retain explicit intent until reset so a delayed restoration cannot undo it. */
+  function beginSharingChange(id) {
+    const change = currentSession();
+    sharingChanges.set(id, change);
+    return change;
+  }
+  const isLatestChange = (id, change) =>
+    isCurrentSession(change) && sharingChanges.get(id) === change;
+  /** Only the latest action may restore controls after a failed request. */
+  function restoreConfirmedShare(id, change) {
+    if (!isLatestChange(id, change)) return;
+    if (confirmedShares.has(id)) active.add(id);
+    else active.delete(id);
+    syncPlaying();
+  }
   /** Serialize sharing/revocation and reject queued work from an earlier account session. */
   function write(task) {
-    const token = generation,
-      uid = getUser()?.uid;
-    if (!uid) return Promise.reject(new Error('Sign in to share your campaign.'));
+    const session = currentSession();
+    if (!session.uid) return Promise.reject(new Error('Sign in to share your campaign.'));
     const next = queue
       .catch(() => {})
       .then(() => {
-        if (token !== generation || uid !== getUser()?.uid)
-          throw new Error('Your account changed. Please try again.');
-        return task(uid);
+        if (!isCurrentSession(session)) throw new Error('Your account changed. Please try again.');
+        return task(session);
       });
     queue = next;
     return next;
   }
   /** Capture this public board before queueing so later gameplay cannot alter the pending copy. */
   function publish(game) {
-    const payload = spectatorPayload(game);
-    return write((ownerUid) => {
-      if (!active.has(game.id)) return;
-      return sdk.setDoc(target(game.id), {
+    const id = game.id,
+      payload = spectatorPayload(game);
+    return write(async (session) => {
+      if (!active.has(id)) return;
+      await sdk.setDoc(target(id), {
         version: 1,
-        ownerUid,
-        gameId: game.id,
+        ownerUid: session.uid,
+        gameId: id,
         payload,
         updatedAt: sdk.serverTimestamp(),
       });
+      if (isCurrentSession(session)) confirmedShares.add(id);
     });
   }
   return {
@@ -215,6 +236,8 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
     reset() {
       generation++;
       active.clear();
+      confirmedShares.clear();
+      sharingChanges.clear();
       playingGame = null;
       syncPlaying();
     },
@@ -227,19 +250,25 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
         sdk.query(sdk.collection(db, 'liveGames'), sdk.where('ownerUid', '==', uid)),
       );
       if (token !== generation || uid !== getUser()?.uid) return;
-      for (const record of records.docs) if (record.data().ownerUid === uid) active.add(record.id);
+      for (const record of records.docs) {
+        if (record.data().ownerUid !== uid || sharingChanges.has(record.id)) continue;
+        active.add(record.id);
+        confirmedShares.add(record.id);
+      }
       syncPlaying();
     },
     /** Opt in only if the first publication succeeds; keep existing shares retryable. */
     async start(game) {
-      const wasShared = active.has(game.id);
-      active.add(game.id);
+      const id = game.id,
+        change = beginSharingChange(id);
+      active.add(id);
       try {
         await publish(game);
+        if (!isLatestChange(id, change)) return;
         syncPlaying();
-        if (playingGame !== game.id) presence.markOffline(game.id);
+        if (playingGame !== id) presence.markOffline(id);
       } catch (error) {
-        if (!wasShared) active.delete(game.id);
+        restoreConfirmedShare(id, change);
         throw error;
       }
     },
@@ -252,16 +281,15 @@ export function createSpectatorService({ db, sdk, getUser, presenceOptions = {} 
      * failure.
      */
     stop(id) {
-      const wasShared = active.has(id);
+      const change = beginSharingChange(id);
       // Disable publication immediately so already queued saves cannot recreate a revoked share.
       active.delete(id);
       syncPlaying();
-      const token = generation;
-      return write(() => sdk.deleteDoc(target(id))).catch((error) => {
-        if (wasShared && token === generation) {
-          active.add(id);
-          syncPlaying();
-        }
+      return write(async (session) => {
+        await sdk.deleteDoc(target(id));
+        if (isCurrentSession(session)) confirmedShares.delete(id);
+      }).catch((error) => {
+        restoreConfirmedShare(id, change);
         throw error;
       });
     },
