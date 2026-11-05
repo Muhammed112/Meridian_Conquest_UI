@@ -278,8 +278,9 @@ An existing public share retains its **Stop sharing** control.
 Visitors open the `#live/` link without signing in and see the board, up to 60 recent events and available
 commentary. They cannot play turns or negotiate.
 
-The owner must keep the game open for play to continue. Leaving shows
-**The player has left the game** above the retained position. An abrupt close or
+The owner must keep the game open for play to continue. Leaving shows a brief
+**The player has left the game** popup and a notice above the retained position.
+The popup appears once per departure. An abrupt close or
 network loss can take about 80 seconds to detect; switching tabs alone does not
 mark the player offline. A live link expires after **five minutes of inactivity**,
 including when the game stays open without interaction. Moves and owner input

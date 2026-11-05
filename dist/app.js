@@ -438,6 +438,20 @@ function watchLiveGame(id) {
   const request = ++liveRequest;
   state.liveStatus = 'connecting';
   state.livePresence = 'unknown';
+  let departureAnnounced = false;
+  /** Announce each departure once, even if presence arrives before the public board. */
+  function announceDeparture() {
+    if (state.livePresence === 'online') departureAnnounced = false;
+    if (
+      state.livePresence === 'offline' &&
+      state.liveStatus === 'live' &&
+      state.watch &&
+      !departureAnnounced
+    ) {
+      departureAnnounced = true;
+      notify('The player has left the game.');
+    }
+  }
   if (!cloud?.spectators) {
     if (!cloudEnabled) state.liveStatus = 'unavailable';
     render();
@@ -459,6 +473,7 @@ function watchLiveGame(id) {
         ) {
           updateReportsCommentary(app, presentationGame(game, motionFrame));
         } else render();
+        announceDeparture();
       },
       () => {
         if (request !== liveRequest) return;
@@ -470,6 +485,7 @@ function watchLiveGame(id) {
         if (request !== liveRequest || state.livePresence === presence) return;
         state.livePresence = presence;
         syncLivePresence(app, presence);
+        announceDeparture();
       },
     );
   } catch {

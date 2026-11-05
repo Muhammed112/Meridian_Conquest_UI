@@ -67,8 +67,9 @@ requests are disabled during that wait; a failure restores the retry control.
 The presence feature adds owner-written records under
 `liveGames/{gameId}/presence/{sessionId}`. While an explicitly shared campaign is open,
 its tab sends a heartbeat every 30 seconds. Leaving the game, signing out or a successful
-page-exit update marks that tab offline. Visitors see **The player has left the game**
-above the retained board; returning clears the notice. Switching browser tabs alone
+page-exit update marks that tab offline. Visitors receive a brief
+**The player has left the game** popup once per departure, with a notice above the
+retained board; returning clears the notice. Switching browser tabs alone
 does not mark the player as gone, and another active owner tab keeps the stream online.
 
 Browsers do not reliably deliver [page-exit events](https://developer.mozilla.org/en-US/docs/Web/API/Window/pagehide_event).

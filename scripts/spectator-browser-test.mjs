@@ -310,7 +310,9 @@ try {
     0,
   );
   const presenceNotice = visitor.page.locator('[data-live-presence-notice]');
+  const departureToast = visitor.page.locator('#toast.visible');
   assert.equal(await presenceNotice.isVisible(), false);
+  assert.equal(await departureToast.count(), 0);
 
   // Leaving the board must notify viewers while keeping the final public position readable.
   await visitor.page.evaluate(() => {
@@ -322,6 +324,8 @@ try {
     location.hash = 'campaigns';
   });
   await presenceNotice.waitFor({ state: 'visible' });
+  await departureToast.waitFor({ state: 'visible' });
+  assert.equal(await departureToast.innerText(), 'The player has left the game.');
   await checkCampaignCardActions(owner.page, game);
   assert.equal(
     await owner.page.getByRole('button', { name: 'Stop sharing', exact: true }).count(),
@@ -342,6 +346,17 @@ try {
     ),
     true,
   );
+  // Redrawing the board or receiving the same offline snapshot must not repeat the popup.
+  await visitor.page.evaluate(() => document.getElementById('toast').classList.remove('visible'));
+  await visitor.page.locator('[data-action="select-country"]').first().click({ force: true });
+  for (const [subscription, target] of watchers.get(visitor.page)) {
+    if (typeof target !== 'string' && target.path === `liveGames/${game.id}/presence`)
+      await visitor.page.evaluate(
+        ({ subscription, value }) => window.receiveLive(subscription, value),
+        { subscription, value: readRecords(target) },
+      );
+  }
+  assert.equal(await departureToast.count(), 0, 'An offline period should produce one popup.');
   await owner.page.evaluate((id) => {
     location.hash = 'game/' + id;
   }, game.id);
@@ -354,6 +369,7 @@ try {
   });
   assert.equal(await owner.page.evaluate(() => window.fixturePresenceOnline), true);
   assert.equal(await presenceNotice.isVisible(), false);
+  assert.equal(await departureToast.count(), 0, 'Switching tabs must not show a departure popup.');
   await owner.page.evaluate(() => {
     delete document.visibilityState;
     document.dispatchEvent(new Event('visibilitychange'));
@@ -361,6 +377,8 @@ try {
   // Browser pagehide attempts departure before shutdown; a restored page must resume its stream.
   await owner.page.evaluate(() => dispatchEvent(new Event('pagehide')));
   await presenceNotice.waitFor({ state: 'visible' });
+  await departureToast.waitFor({ state: 'visible' });
+  assert.equal(await departureToast.innerText(), 'The player has left the game.');
   await owner.page.evaluate(() => dispatchEvent(new Event('pageshow')));
   await presenceNotice.waitFor({ state: 'hidden' });
   await visitor.page.evaluate(() => {
