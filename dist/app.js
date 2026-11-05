@@ -50,6 +50,7 @@ import { captureFocus, restoreFocus } from './ui/focus.js';
 import { createCampaignController } from './controllers/campaigns.js';
 import { createSettingsController } from './controllers/settings.js';
 import { renderCampaignStatus } from './ui/campaign-status.js';
+import { createGameSummaryDialog } from './ui/game-summary.js';
 
 // Getters keep view dependencies current across account changes, routing and animation frames.
 const viewContext = {
@@ -214,6 +215,9 @@ const viewContext = {
   },
   get currentGame() {
     return currentGame;
+  },
+  get gameSummary() {
+    return gameSummary;
   },
   get notify() {
     return notify;
@@ -389,6 +393,20 @@ const notify = (message) => {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => node.classList.remove('visible'), 3500);
 };
+const gameSummary = createGameSummaryDialog({
+  getCloud: () => cloud,
+  getUser: () => cloud?.user,
+  notify,
+  pauseReplay() {
+    clearInterval(replayTimer);
+    replayTimer = null;
+    render();
+  },
+  onSelectEvent(index) {
+    state.replay = index;
+    render();
+  },
+});
 /** Save playable campaigns locally first, then queue account writes without blocking play. */
 function save() {
   if (state.watch || state.view === 'tutorial') return;
@@ -481,6 +499,7 @@ function liveWatchNotice() {
 
 /** Reset route-specific playback and select the local, private or public game view. */
 function route() {
+  gameSummary.close();
   clearInterval(replayTimer);
   replayTimer = null;
   state.watchNPC = false;
@@ -832,7 +851,10 @@ if (cloudEnabled) {
       render();
     },
     onSession(user, remote, ready) {
-      if (accountId !== (user?.uid || null)) tutorial = null;
+      if (accountId !== (user?.uid || null)) {
+        gameSummary.reset();
+        tutorial = null;
+      }
       accountId = user?.uid || null;
       cloudReady = ready;
       multiplayer.sessionChanged();

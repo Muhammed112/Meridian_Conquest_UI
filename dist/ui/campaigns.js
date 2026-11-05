@@ -82,12 +82,21 @@ export function createCampaignViews(context) {
     >`;
   }
 
-  /** Summarize one saved campaign and expose its resume, replay and sharing actions. */
+  /** Active cards resume play; completed cards also expose replay and recorded-game sharing. */
   function gameCard(game, index) {
     const { owned, map, liveShares } = context;
 
     const troops = owned(game).reduce((n, c) => n + c.army, 0),
-      start = findCountry(game.start);
+      start = findCountry(game.start),
+      completed = Number.isInteger(game.winner),
+      stopSharingButton = liveShares?.isShared(game.id)
+        ? renderButton(
+            completed ? 'Stop live sharing' : 'Stop sharing',
+            'stop-sharing',
+            'btn-sm',
+            `data-id="${escapeHTML(game.id)}"`,
+          )
+        : '';
     return /* prettier-ignore */ `<article class="campaign-card"
       ><div class="campaign-art"
         >${map(game.countries, { mini: true })}<span
@@ -121,24 +130,21 @@ export function createCampaignViews(context) {
             >COUNTRIES</div
           ><div class="campaign-stat"><strong>${troops}</strong>SOLDIERS</div></div
         ><div class="campaign-card-actions"
-          ><a href="#game/${game.id}" class="btn btn-primary"
-            >${game.winner !== null ? 'View results' : 'Resume campaign'} ${renderIcon('arrow')}</a
-          ><a href="#history/${game.id}" class="btn" aria-label="Replay ${escapeHTML(game.name)}"
-            >${renderIcon('history')}</a
-          ><button
-            class="icon-button"
-            data-action="share"
-            data-id="${game.id}"
-            aria-label="${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share viewing-only game link'}"
-            title="${Number.isInteger(game.winner) ? 'Share gameplay' : 'Share live link'}"
-            >${renderIcon('copy')}</button
           >${
-            liveShares?.isShared(game.id)
-              ? /* prettier-ignore */ `<button class="btn btn-sm" data-action="stop-sharing" data-id="${
-                        escapeHTML(game.id)
-                      }">${Number.isInteger(game.winner) ? 'Stop live sharing' : 'Stop sharing'}</button>`
-              : ''
-          }</div
+            completed
+              ? /* prettier-ignore */ `<div class="campaign-card-secondary"
+                  ><a href="#history/${game.id}" class="btn" aria-label="Replay ${escapeHTML(game.name)}"
+                    >${renderIcon('history')} Replay</a
+                  >${renderButton(
+                    `${renderIcon('copy')} Share gameplay`,
+                    'share',
+                    '',
+                    `data-id="${escapeHTML(game.id)}" aria-label="Share gameplay" title="Share gameplay"`,
+                  )}${stopSharingButton}</div>`
+              : stopSharingButton
+          }<a href="#game/${game.id}" class="btn btn-primary btn-full"
+            >${completed ? 'View results' : 'Resume campaign'} ${renderIcon('arrow')}</a
+          ></div
         ></div
       ></article
     >`;

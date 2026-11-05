@@ -15,7 +15,7 @@
     "lint": "eslint .",
     "test": "node --test tests/*.test.js",
     "browsers:install": "playwright install chromium",
-    "test:browser": "node scripts/map-browser-test.mjs && node scripts/battle-browser-test.mjs && node scripts/diplomacy-browser-test.mjs && node scripts/single-player-opening-browser-test.mjs && node scripts/population-browser-test.mjs && node scripts/catalogue-browser-test.mjs && node scripts/multiplayer-ui-browser-test.mjs && node scripts/tutorial-browser-test.mjs && node scripts/tutorial-adviser-browser-test.mjs && node scripts/spectator-browser-test.mjs && node scripts/quality-browser-test.mjs",
+    "test:browser": "node scripts/map-browser-test.mjs && node scripts/battle-browser-test.mjs && node scripts/diplomacy-browser-test.mjs && node scripts/single-player-opening-browser-test.mjs && node scripts/population-browser-test.mjs && node scripts/catalogue-browser-test.mjs && node scripts/multiplayer-ui-browser-test.mjs && node scripts/tutorial-browser-test.mjs && node scripts/tutorial-adviser-browser-test.mjs && node scripts/spectator-browser-test.mjs && node scripts/game-summary-browser-test.mjs && node scripts/quality-browser-test.mjs",
     "test:ai": "node --test tests/commentary-validation.test.js",
     "commentary:preview": "node scripts/commentary-preview.mjs",
     "test:rules": "firebase emulators:exec --config firebase.test.json --project demo-meridian --only firestore \"node --test tests/security/*.test.js\""

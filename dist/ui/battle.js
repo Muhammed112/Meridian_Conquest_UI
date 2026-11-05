@@ -883,6 +883,13 @@ export function createBattleViews(context) {
                   '',
                   `aria-label="Next event" ${index === events.length - 1 ? 'disabled' : ''}`,
                 )
+              }${
+                renderButton(
+                  `${renderIcon('history')} AI summary`,
+                  'replay-summary',
+                  '',
+                  'aria-haspopup="dialog"',
+                )
               }</div
             ><div class="notice"
               >${renderIcon('lock')}<span

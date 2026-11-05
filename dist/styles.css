@@ -764,16 +764,16 @@ label.field-label {
   margin-bottom: 2px;
 }
 .campaign-card-actions {
+  display: grid;
+  gap: 9px;
+}
+.campaign-card-secondary {
   display: flex;
   gap: 9px;
   flex-wrap: wrap;
 }
-.campaign-card-actions .btn-primary {
+.campaign-card-secondary > .btn {
   flex: 1;
-}
-.campaign-card-actions .icon-button {
-  height: 44px;
-  width: 44px;
 }
 .save-note {
   display: flex;
@@ -1834,6 +1834,7 @@ label.field-label {
 }
 .history-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 12px;

@@ -9,6 +9,7 @@ export async function createCloudFixture({
   persistenceError = null,
   read = async () => ({ docs: [] }),
   loadTimeout = 30000,
+  aiSettings = { enabled: false },
   updateProfile = async (account, changes) => Object.assign(account, changes),
 } = {}) {
   let session,
@@ -89,7 +90,7 @@ export async function createCloudFixture({
   };
   const service = await connectCloud({
     config: { projectId: 'test' },
-    aiSettings: { enabled: false },
+    aiSettings,
     loadSDK: async () => sdk,
     loadTimeout,
     onSession: (user, games, ready) => sessions.push({ user, games, ready }),

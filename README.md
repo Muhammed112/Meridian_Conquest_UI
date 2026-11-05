@@ -20,14 +20,17 @@ Firestore and Firebase AI Logic. Firebase remains on the free Spark plan; the
 deployment does not use Cloud Functions or a personal Gemini API key.
 
 The latest application release was published on **5 November 2026**.
-It includes the opening turn-order preview, **Alliance** label, compact action
-panels, updated report sharing and live-view presence notices. Its matching
-Firestore rules are deployed. The release also fixes tutorial typing timing and
+It includes on-demand replay summaries with concrete key events, a quiet loading
+state and links to each highlighted moment. Active campaign cards focus on
+resuming play; completed cards offer named replay and gameplay-sharing controls.
+Opening turn-order previews, **Alliance** labels, report sharing and live-view
+presence notices remain available. Matching Firestore rules are deployed.
+The release also fixes tutorial typing timing and
 prevents delayed sharing restoration or earlier failed requests from undoing
 Stop sharing. Application and Firestore checks run in GitHub Actions.
 
-Release checks passed formatting, lint, **281 unit tests** and **18 Firestore
-permission tests**. Post-deployment checks matched 304 non-audio public files to
+Release checks passed formatting, lint, **306 unit tests** and **18 Firestore
+permission tests**. Post-deployment checks matched 306 non-audio public files to
 the local source, confirmed eight private paths were unavailable, and checked the
 homepage and opening-order preview in a browser. The opening-order deployment
 check used a cloud-disabled fixture without creating a real campaign.
@@ -61,6 +64,8 @@ Field reports and AI commentary tabs.
   opening rolls and bots for empty seats.
 - **Sharing and replay:** anonymous read-only live viewing, player-left notices,
   completed-game recordings and chronological replay controls.
+- **Replay summaries:** an on-demand Gemini recap of recorded turning points,
+  with links to each highlighted moment and a factual fallback.
 - **Accounts and saves:** player nicknames, password reset, private cloud saves,
   browser recovery copies and protection against competing saves.
 
@@ -267,8 +272,10 @@ room membership and turn permissions restrict who can act.
 ### Live viewing and completed gameplay
 
 For an ongoing signed-in single-player campaign, use **Share live link** in the
-reports header or the campaign-card share icon. Visitors open the `#live/` link
-without signing in and see the board, up to 60 recent events and available
+in-game reports header. Active campaign cards provide **Resume campaign**;
+completed cards also provide **Replay** and **Share gameplay**.
+An existing public share retains its **Stop sharing** control.
+Visitors open the `#live/` link without signing in and see the board, up to 60 recent events and available
 commentary. They cannot play turns or negotiate.
 
 The owner must keep the game open for play to continue. Leaving shows
@@ -283,6 +290,17 @@ after the owner leaves and cannot be revoked. **Stop live sharing** separately
 revokes an earlier live link. Private replay retains the owner's full saved
 history. Public spectator links apply to single-player; multiplayer rooms remain
 member-only.
+
+In **Battle replay**, select **AI summary** beside the playback controls to pause
+the replay and open a recap of key moments. Signed-in players can generate the
+recap using the existing Gemini setup; it works independently of the live
+commentary setting. Only a loading message appears while Gemini generates it.
+Reopening an unchanged replay on the current page reuses its summary; refreshing
+the page clears this cache. **View moment** jumps to the corresponding recorded event.
+The key-event list names recorded captures, eliminations, alliance outcomes and
+major battles, including available losses and territory changes, before the AI recap.
+If Gemini is unavailable or the viewer is signed out, recorded key moments are
+shown instead. Shared replays summarise only the events included in their link.
 
 ## Population data
 

@@ -12,6 +12,7 @@ import { firebaseConfig } from './firebase-config.js';
 import { normalizeNickname } from './profile.js';
 import { createSpectatorService } from './spectators.js?v=live-presence-20261104-1';
 import { CampaignStore } from './campaign-store.js';
+import { buildGameSummary } from './game-summary.js';
 
 export const cloudEnabled = Boolean(firebaseConfig?.projectId);
 /** Compose account-scoped persistence, narration and sharing using an injectable Firebase SDK. */
@@ -139,6 +140,18 @@ export async function connectCloud({
     },
     commentary: narrator,
     spectators,
+    /** Summarise a supplied replay on demand without changing commentary settings or saved facts. */
+    async summarizeGame(game) {
+      if (!user || !ready) throw new Error('Sign in and wait for your campaign to load.');
+      if (!aiSettings.enabled) throw new Error('AI summaries are unavailable in this setup.');
+      const token = generation,
+        uid = user.uid,
+        facts = buildGameSummary(game);
+      const summary = await generateCommentary.summarize(facts);
+      if (token !== generation || uid !== user?.uid)
+        throw new Error('Your account changed. Please try again.');
+      return summary;
+    },
     /** Queue recent unnarrated facts; callers enforce owner or multiplayer-host access. */
     requestCommentary(game, { roomCode } = {}) {
       if (!user || !ready) throw new Error('Sign in and wait for your campaign to load.');

@@ -313,6 +313,10 @@ export function bindAppEvents(context) {
         );
         return;
       }
+      if (action === 'replay-summary') {
+        if (g && context.state.view === 'history') await context.gameSummary.open(g);
+        return;
+      }
       if (action.startsWith('replay-')) {
         const last = g.events.length - 1;
         if (action === 'replay-select') context.state.replay = Number(button.dataset.index);

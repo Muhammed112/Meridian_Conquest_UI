@@ -177,15 +177,54 @@ async function openPage(owner, path, viewport, fixtureGame = game) {
   return { page, errors, context };
 }
 
+/** Active cards stay focused on resuming; completed cards retain their named replay/share actions. */
+async function checkCampaignCardActions(page, campaign) {
+  const card = page.locator('.campaign-card').filter({
+    has: page.locator(`a[href="#game/${campaign.id}"]`),
+  });
+  const replay = card.locator(`a[href="#history/${campaign.id}"]`);
+  const share = card.locator('[data-action="share"]');
+  const primary = card.locator(`a[href="#game/${campaign.id}"]`);
+  const completed = Number.isInteger(campaign.winner);
+  await primary.waitFor();
+  assert.match(await primary.innerText(), completed ? /View results/ : /Resume campaign/);
+  if (!completed) {
+    assert.equal(await replay.count(), 0);
+    assert.equal(await share.count(), 0);
+    return;
+  }
+  await share.waitFor();
+  assert.equal(await replay.innerText(), 'Replay');
+  assert.equal(await share.innerText(), 'Share gameplay');
+  assert.equal(
+    await card.evaluate((element) => {
+      const card = element.getBoundingClientRect();
+      const primary = element.querySelector('a[href^="#game/"]').getBoundingClientRect();
+      const secondary = [
+        element.querySelector('a[href^="#history/"]'),
+        element.querySelector('[data-action="share"]'),
+      ];
+      return secondary.every((action) => {
+        const bounds = action.getBoundingClientRect();
+        return (
+          bounds.bottom <= primary.top + 1 && bounds.left >= card.left && bounds.right <= card.right
+        );
+      });
+    }),
+    true,
+    'Replay and the correct share action should fit above the main campaign action.',
+  );
+}
+
 try {
   browser = await chromium.launch({ headless: true });
   const owner = await openPage(true, '/#campaigns', { width: 1440, height: 1000 });
-  // Sharing remains available on campaign cards, while active players use the reports header.
+  // Active cards omit replay/sharing shortcuts; the game retains its reports-header controls.
+  await checkCampaignCardActions(owner.page, game);
+  await owner.page.screenshot({ path: '.firebase/campaign-button-labels.png' });
   assert.equal(
-    await owner.page
-      .getByRole('button', { name: 'Share viewing-only game link', exact: true })
-      .count(),
-    1,
+    await owner.page.getByRole('button', { name: 'Share live link', exact: true }).count(),
+    0,
   );
   await owner.page.getByRole('link', { name: 'Resume campaign', exact: false }).click();
   const ownerReports = owner.page.locator('[data-reports-panel]');
@@ -254,6 +293,12 @@ try {
     location.hash = 'campaigns';
   });
   await presenceNotice.waitFor({ state: 'visible' });
+  await checkCampaignCardActions(owner.page, game);
+  assert.equal(
+    await owner.page.getByRole('button', { name: 'Stop sharing', exact: true }).count(),
+    1,
+    'An existing active stream must still be revocable from its campaign card.',
+  );
   assert.equal(
     await presenceNotice.innerText(),
     'The player has left the game. Showing the last saved position.',
@@ -473,6 +518,7 @@ try {
       await recordedVisitor.page.locator('.watch-notice').waitFor();
     }
     await completedOwner.page.goto(origin + '/#campaigns');
+    await checkCampaignCardActions(completedOwner.page, completed);
     assert.equal(
       await completedOwner.page
         .getByRole('button', { name: 'Share gameplay', exact: true })

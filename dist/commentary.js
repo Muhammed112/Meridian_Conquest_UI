@@ -1,6 +1,12 @@
 import { commanders } from './data.js';
 import { commentaryFacts, commentaryIssues } from './commentary-validation.js';
 import { isDiplomacyFact } from './diplomacy.js';
+import {
+  summaryInstructions,
+  summarySchema,
+  summaryRequest,
+  parseGameSummary,
+} from './game-summary.js';
 
 export const COMMENTARY_VERSION = 2;
 const commentaryPriorities = {
@@ -638,14 +644,18 @@ export class CommentaryQueue {
 /** Prepare attestation/model setup once, without spending a Gemini generation request. */
 export function createGeminiGenerator({ app, base, settings, loadSDK }) {
   let modelPromise,
+    summaryModel,
+    aiSDK,
+    ai,
     appCheck = null;
   const prepare = async () => {
     modelPromise ??= (async () => {
-      const [aiSDK, checkSDK] = await Promise.all(
+      const [modelSDK, checkSDK] = await Promise.all(
         ['firebase-ai.js', 'firebase-app-check.js'].map((file) =>
           loadSDK ? loadSDK(file) : import(base + file),
         ),
       );
+      aiSDK = modelSDK;
       if (
         ['localhost', '127.0.0.1', '[::1]'].includes(globalThis.location?.hostname) &&
         globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN === undefined
@@ -664,7 +674,7 @@ export function createGeminiGenerator({ app, base, settings, loadSDK }) {
         });
       }
       if (checkSDK.getToken) await checkSDK.getToken(appCheck, false);
-      const ai = aiSDK.getAI(app, { backend: new aiSDK.GoogleAIBackend() });
+      ai = aiSDK.getAI(app, { backend: new aiSDK.GoogleAIBackend() });
       return aiSDK.getGenerativeModel(ai, {
         model: settings.model,
         systemInstruction: commentaryInstructions,
@@ -719,5 +729,21 @@ export function createGeminiGenerator({ app, base, settings, loadSDK }) {
     return result.response.text();
   };
   generate.prepare = prepare;
+  /** A deliberate replay recap shares attestation setup but has its own prompt and output shape. */
+  generate.summarize = async (facts) => {
+    await prepare();
+    summaryModel ??= aiSDK.getGenerativeModel(ai, {
+      model: settings.model,
+      systemInstruction: summaryInstructions,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: summarySchema,
+        thinkingConfig: { thinkingLevel: 'minimal' },
+        maxOutputTokens: 1536,
+      },
+    });
+    const result = await summaryModel.generateContent(summaryRequest(facts), { timeout: 30000 });
+    return parseGameSummary(result.response.text(), facts);
+  };
   return generate;
 }
