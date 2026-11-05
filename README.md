@@ -20,14 +20,15 @@ Firestore and Firebase AI Logic. Firebase remains on the free Spark plan; the
 deployment does not use Cloud Functions or a personal Gemini API key.
 
 The latest application release, published on **5 November 2026**, is commit
-[`c10feed`](https://github.com/Muhammed112/Meridian_Conquest_UI/commit/c10feed).
+[`c0841e1`](https://github.com/Muhammed112/Meridian_Conquest_UI/commit/c0841e1).
 It includes the opening turn-order preview, **Alliance** label, compact action
 panels, updated report sharing and live-view presence notices. Its matching
-Firestore rules are deployed.
+Firestore rules are deployed. The release also fixes tutorial typing timing and
+passes the application and Firestore checks in GitHub Actions.
 
 Release checks passed formatting, lint, **273 unit tests** and **18 Firestore
 permission tests**. Post-deployment checks matched 304 non-audio public files to
-the local source, confirmed seven private paths were unavailable, and checked the
+the local source, confirmed eight private paths were unavailable, and checked the
 homepage and opening-order preview in a browser. The opening-order deployment
 check used a cloud-disabled fixture without creating a real campaign.
 
@@ -105,24 +106,33 @@ save revisions and compatibility with existing campaigns.
 
 ### Run locally
 
-Clone the repository:
+Use the supplied source ZIP; no GitHub access is required. The repository is
+private, so cloning its link requires an account with repository access.
 
-```sh
-git clone https://github.com/Muhammed112/Meridian_Conquest_UI.git
-cd Meridian_Conquest_UI
-```
-
-For the submission ZIP, extract it and open a terminal in the folder containing
-`package.json` instead. Install the locked dependencies and start the server:
+1. Install Node.js 24 with npm. Confirm `node --version` shows `v24` and
+   `npm --version` prints a version number.
+2. Extract the ZIP completely. Open a terminal in the extracted folder containing
+   both `package.json` and `package-lock.json`, rather than inside `dist`.
+3. Run these commands in that terminal:
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Open **http://localhost:8081**. The terminal prints the actual address. The server
-binds only to your computer. No build command or administrator CLI login is
-required for ordinary gameplay and account sign-in.
+4. Keep the terminal open. When it prints `Meridian Conquest: http://localhost:8081`,
+   open **http://localhost:8081** in Chrome or another modern browser.
+5. Create a player account or sign in using the application test credentials
+   supplied separately with the submission. These are player credentials, not
+   Firebase administrator or GitHub credentials.
+
+Run the application through this server, rather than double-clicking
+`dist/index.html`. Press **Ctrl+C** in the terminal when finished. Internet access
+to Google/Firebase services is required, including when playing on localhost.
+
+No build command, `.env.local`, private `.firebase`/`.vercel` files or
+administrator CLI login is required for ordinary gameplay, sign-in and cloud
+saves. The required public Firebase configuration and bundled data are included.
 
 To use port **8082**, or another available port, in PowerShell:
 
@@ -131,7 +141,19 @@ $env:MERIDIAN_PORT = '8082'
 npm run dev
 ```
 
+If you already have repository access, cloning is an alternative to extracting
+the ZIP; then follow the same installation and start commands above:
+
+```sh
+git clone https://github.com/Muhammed112/Meridian_Conquest_UI.git
+cd Meridian_Conquest_UI
+```
+
 ### Local AI setup
+
+For commentary without operator setup, open
+**[the deployed application](https://meridian-conquest.vercel.app)** and sign in
+with an ordinary player account. No local installation is needed for that route.
 
 Local commentary needs an App Check development attestation. An operator with
 access to the configured Firebase project can run:
@@ -146,6 +168,11 @@ The development server registers or reuses a private token under the ignored
 empty local-configuration stub. Reviewers without operator access can use the
 deployed site for commentary; an ordinary player does not need project
 administration access.
+
+A missing local attestation can show an AI setup warning; it does not prevent the
+server, ordinary gameplay, sign-in or saves from working. Signing in as a player
+does not grant permission to register an App Check token. Examiner read-only
+database access is separate from operator App Check administration.
 
 See [Firebase setup](docs/FIREBASE.md) to configure another project. A plain
 static server can serve `dist`, but use `npm run dev` for local AI setup and
