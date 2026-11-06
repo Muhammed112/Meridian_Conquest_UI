@@ -1,7 +1,7 @@
 # Meridian Conquest
 
-Meridian Conquest is a turn-based strategy web application developed for my
-**INF4001N Entrance Exam for 2027**. Inspired by Risk,
+Meridian Conquest is a turn-based strategy **PC game played in a desktop browser**.
+It was developed for my **INF4001N Entrance Exam for 2027**. Inspired by Risk,
 it places ten real countries on a world map. Choose your starting country,
 build your army and defeat nine opposing commanders to control all ten countries.
 
