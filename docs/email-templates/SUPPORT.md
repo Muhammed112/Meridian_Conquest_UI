@@ -1,12 +1,10 @@
-# Password-reset email template update rejected
+# Password-reset email template update rejection
 
-Copy the following into a Firebase Authentication support case and attach
-`password-reset.html` from this directory.
+The local `password-reset.html` contains the proposed replacement message.
 
 **Project ID:** `meridian-conquest-m112`
 
-Please review the restriction preventing password-reset email template updates
-for this project. The Identity Toolkit Admin v2 project-config API rejects a
+The Identity Toolkit Admin v2 project-config API rejects this project's
 password-reset template body update with HTTP 400:
 
 ```text
@@ -22,5 +20,5 @@ update mask. The replacement body retains `%DISPLAY_NAME%` and `%LINK%`.
 The request was rejected on 1 November 2026. Reading the configuration afterward
 confirmed the existing default message was unchanged.
 
-Please advise how to enable password-reset message customisation for this project
-or apply the attached message while preserving the current email delivery setup.
+The template-editing restriction remains unresolved; the default email delivery
+setup is unchanged.

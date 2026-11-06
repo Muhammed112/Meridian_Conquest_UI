@@ -106,5 +106,5 @@ export function createWelcomeDemo(mapView) {
     advance();
   }
 
-  return { mount, stop };
+  return { mount };
 }

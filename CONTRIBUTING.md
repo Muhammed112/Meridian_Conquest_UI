@@ -80,7 +80,7 @@ Install Java 21 and run `npm run test:rules` to test actual Firestore rules. The
 dedicated configuration binds Firestore to `127.0.0.1:8180` and uses the fake
 project `demo-meridian`. These tests refuse a different emulator address and
 never modify production campaigns. GitHub Actions runs both check suites and
-browser tests on pull requests and main-branch pushes once the workflow is pushed.
+browser tests on pull requests and main-branch pushes.
 
 The separate `*-browser-test.mjs` scripts for nicknames, campaign loading,
 multiplayer and Gemini can use the configured live Firebase project. Run them
@@ -106,23 +106,24 @@ reported losses. Firestore uses bounded checks that fit its evaluation limits.
 
 Legacy payloads cannot be inspected inside Firestore rules, and browser-generated
 dice are not authoritative. The free Spark setup is suitable for trusted friends;
-it does not provide complete anti-cheat. Do not describe App Check or client
-validation as proof of fair gameplay.
+it does not provide complete anti-cheat. App Check and client validation do not
+establish fair gameplay.
 
 Campaign boards adopt version 2 during ordinary saves; loading history does not
 rewrite event documents. New saves stage immutable events with predecessor links
 then commit a revision and history head in a transaction. Readers follow that
 head, excluding uncommitted branches. Once versioned, a board cannot accept a
 stale revision or an older writer that omits its revision. Histories load in
-250-document pages only when selected; a failed history never blocks another game. Publish the updated frontend before inviting people
-using an older hosted client into new version 2 rooms.
+250-document pages only when selected; a failed history never blocks another game.
+Version 2 rooms require a compatible frontend.
 
 ## Tooling and private configuration
 
 Firebase CLI and Playwright are project-local, pinned development dependencies.
 `scripts/firebase-admin-access.mjs` isolates the CLI's private credential API and
 checks its expected shape. Operator scripts require `npx firebase login`; ordinary
-gameplay does not. Never print tokens or move `.firebase` into public assets.
+gameplay does not. Tokens and `.firebase` contents are private operator data,
+excluded from public assets.
 
 The lockfile includes narrow development-only overrides for patched gRPC, UUID
 and Pub/Sub tracing dependencies. Pub/Sub uses the stable W3C trace-context API
@@ -136,4 +137,4 @@ to generated assets, dependencies and ignored local configuration.
 
 Firebase remains on Spark. Hosting/rule deployments are separate from checks;
 Cloud Functions in `functions/` are an optional, undeployed alternative requiring
-a different hosting/billing decision. Never deploy them as part of this cleanup.
+an eligible billing plan and separate deployment configuration.

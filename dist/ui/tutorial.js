@@ -4,7 +4,7 @@ import { tutorialSteps } from '../tutorial.js';
 import { tutorialLessons } from './tutorial-lessons.js';
 
 /** Present every rule and example in small dialogue pages before the practice instruction. */
-export function tutorialDialogue(session) {
+function tutorialDialogue(session) {
   const lesson = tutorialLessons[session.step];
   const nickname = session.game.playerNames?.[0];
   const greeting =

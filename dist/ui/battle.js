@@ -661,7 +661,7 @@ export function createBattleViews(context) {
         ></section
       >`;
     }
-    if (state.action === 'diplomacy' && canNegotiate && !game.battle) {
+    if (state.action === 'diplomacy' && canNegotiate) {
       return renderDiplomacyPanel(game, {
         player: local,
         nameOf,

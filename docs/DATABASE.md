@@ -63,9 +63,8 @@ Commentary is excluded from factual event records and stored separately.
 
 Staging and head selection allow histories larger than one write batch. A failed
 upload leaves the previous committed board readable. Unreferenced staged events
-are retained rather than deleting player data. A future maintenance operation
-could remove verified unreferenced events after a retention period; ordinary
-gameplay performs no such deletion.
+are retained rather than deleting player data. Ordinary gameplay performs no
+deletion of unreferenced events.
 
 ## Compatibility strategy
 
@@ -75,18 +74,16 @@ legacy event; the earlier ordered legacy history remains intact. A normal save
 adopts versioned writes. Once versioned, rules reject stale revisions and writers
 that try to remove revision metadata.
 
-Release this writer with its matching Firestore rules and update every supported
-frontend before allowing versioned saves. Publishing the frontend against the
-previous rules rejects the new metadata fields. Existing browser tabs must refresh
-before writing an upgraded campaign. Older readers do not understand committed
-history branches, even though the legacy board payload remains present. This is
-a coordinated client release, not a bulk rewrite of existing campaigns.
+Versioned saves require matching Firestore rules and compatible frontends.
+The previous rules reject the new metadata fields. Existing browser tabs load the
+updated writer after a refresh. Older readers do not understand committed history
+branches, even though the legacy board payload remains present. This compatibility
+requirement does not involve a bulk rewrite of existing campaigns.
 
 The legacy JSON `payload` remains dual-written while older deployed clients may
-read it. Removing it requires a separately planned migration: inventory client
-versions, update every supported deployment, confirm typed readers cover existing
-saves, retain a backup and only then remove compatibility writes. Formatting or
-routine feature work must not delete the old fields in bulk.
+read it. Removing it requires a migration that verifies client compatibility and
+existing saves, updates supported deployments and retains a backup. Routine
+feature updates preserve these compatibility fields.
 
 ## Indexing, limits and permissions
 

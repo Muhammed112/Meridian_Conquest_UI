@@ -4,9 +4,9 @@ The app supports Firebase Email/Password Authentication, account-specific Firest
 
 ## Population updates
 
-The population feature supports all 234 countries and territories in the required Worldometers table, including microstates. Run `npm run dev` for local source checks at startup and daily while the server runs. The last validated response is cached outside `dist` at `.firebase/population-cache.json`, and `/population-data.json` serves it immediately to the local app. Existing games retain their original population and reward fields. Source checks pause when this server is off. Hosted clients use the bundled snapshot and public Firestore reference; GitHub's scheduled source checks remain inactive until their workflow is pushed.
+The population feature supports all 234 countries and territories in the required Worldometers table, including microstates. Run `npm run dev` for local source checks at startup and daily while the server runs. The last validated response is cached outside `dist` at `.firebase/population-cache.json`, and `/population-data.json` serves it immediately to the local app. Existing games retain their original population and reward fields. Source checks pause when this server is off. Hosted clients use the bundled snapshot and public Firestore reference; scheduled source checks use GitHub Actions.
 
-The optional GitHub workflow `.github/workflows/populations.yml` is included in the GitHub backup. Its daily schedule runs when enabled in the repository Actions settings. The public reference `publicData/populations`, restricted updater account and encrypted GitHub Secrets have been configured and tested. A hosted/static client can read the reference without sign-in; only the dedicated updater can publish it. No administrator credential is stored in GitHub or the browser.
+The optional GitHub workflow is defined in `.github/workflows/populations.yml`. Its daily schedule runs when enabled in the repository Actions settings. The public reference `publicData/populations`, restricted updater account and encrypted GitHub Secrets have been configured and tested. A hosted/static client can read the reference without sign-in; only the dedicated updater can publish it. No administrator credential is stored in GitHub or the browser.
 
 One-time setup after `npm ci` and `npx firebase login`:
 
@@ -26,9 +26,7 @@ One-time setup after `npm ci` and `npx firebase login`:
 
 ## Examiner database access
 
-The PDF's three examiner accounts have `roles/datastore.viewer` on this project: `ammarcanani@gmail.com`, `mc.tanner@uct.ac.za`, and `ridewaan.hanslo@uct.ac.za`. This grants read-only Firestore access, including database browsing, without document creation, edits or deletion. They can open the [Firestore console](https://console.cloud.google.com/firestore/databases?project=meridian-conquest-m112) using those Google accounts. Existing project permissions were preserved; the pre-change IAM policy is backed up privately under `.firebase/iam-before-examiner-access.json` and must not be deployed or included in a source submission.
-
-`node scripts/grant-examiner-access.mjs` previews the exact role and recipients. The `--apply` option adds only those grants and verifies the result; it does not create application login accounts or send email.
+The three examiner accounts have `roles/datastore.viewer` on this project: `ammarcanani@gmail.com`, `mc.tanner@uct.ac.za`, and `ridewaan.hanslo@uct.ac.za`. This grants read-only Firestore access, including database browsing, without document creation, edits or deletion. They can open the [Firestore console](https://console.cloud.google.com/firestore/databases?project=meridian-conquest-m112) using those Google accounts. Existing project permissions were preserved; the pre-change IAM policy is stored privately in the ignored `.firebase/iam-before-examiner-access.json` file.
 
 Email/password Authentication is enabled. Authorized domains include `localhost`, `meridian-conquest-m112.firebaseapp.com`, `meridian-conquest-m112.web.app` and `meridian-conquest.vercel.app`. Firestore security rules and indexes are deployed.
 
@@ -36,7 +34,7 @@ Sign-in uses Firebase session persistence. Refreshing the page keeps the user si
 
 The password-reset message is maintained in `docs/email-templates/password-reset.html`. It uses `%DISPLAY_NAME%` for the saved player nickname and `%LINK%` for Firebase's generated reset link. After signing in with the Firebase CLI, run `node scripts/configure-password-reset-email.mjs` to preview it and add `--apply` to publish it. The script backs up the previous template under the ignored `.firebase/auth-email-backups/` directory, changes only the password-reset body and format, and reads them back to verify the update. It does not send an email or change any account or campaign. Firebase serves the updated template directly; a frontend deployment is not needed.
 
-On 1 November 2026, Firebase rejected this project's template update with HTTP 400 `EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`. A subsequent read confirmed that the default password-reset email remained unchanged. The custom message is prepared locally but is **not live**. Ask [Firebase Support](https://firebase.google.com/support) to review the template-editing restriction; a ready-to-copy request is in [email-templates/SUPPORT.md](email-templates/SUPPORT.md). No billing or email-provider change was made.
+On 1 November 2026, Firebase rejected this project's template update with HTTP 400 `EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`. A subsequent read confirmed that the default password-reset email remained unchanged. The custom message is prepared locally but is **not live**. The restriction is documented in [email-templates/SUPPORT.md](email-templates/SUPPORT.md) for [Firebase Support](https://firebase.google.com/support). No billing or email-provider change was made.
 
 Player nicknames are saved on the Firebase Authentication profile (`displayName`). Users choose a nickname at signup or edit it under **Settings → Player nickname**. New single-player campaigns record it in `playerNames`; room creation and joining copy that same account nickname into the room's members. Updating a nickname does not reload or rewrite saved campaigns, and existing rooms keep their recorded names. No additional Firestore permission is required for profile editing.
 
@@ -44,7 +42,7 @@ The project remains on the free Spark plan with billing disabled. Gemini comment
 
 ## Live spectator links
 
-The latest live-view rules and index exemption were published on 1 November 2026. Publishing the frontend on Vercel does not publish future Firebase rule changes. Follow [Vercel setup](VERCEL.md) when using that host; the same Firebase project and existing accounts/campaigns are retained.
+Live viewing uses Firestore rules and an index exemption for the public payload. Vercel frontend deployments do not update Firebase rules. [Vercel setup](VERCEL.md) describes this hosting configuration, which retains the same Firebase project and existing accounts/campaigns.
 
 For an active campaign, the signed-in owner uses **Share live link** in the reports header. This publishes a public gameplay copy under `liveGames/{gameId}` and copies a `#live/{gameId}` link. Active campaign cards offer **Resume campaign** without Replay or a control to start sharing. If a campaign is already public, its card retains **Stop sharing** so access can still be revoked. Visitors subscribe without signing in. Private campaign documents and their event/report collections stay owner-only. Only the original owner may publish or delete the live copy; other signed-in players have the same read-only access as visitors. Public listing is denied, while an owner can query their own shares to resume publishing after signing back in.
 
@@ -78,8 +76,8 @@ close or lost connection can take about 80 seconds to show. Each active shared t
 about two Firestore writes per minute, plus visitor reads, within the existing Spark quota.
 Presence never grants visitors gameplay writes or exposes account credentials.
 
-Publish the updated lease/presence rules and frontend together to activate expiration
-on the public site. Updating the frontend alone cannot revoke public database access.
+Expiration requires matching lease/presence rules and frontend behavior.
+Updating the frontend alone cannot revoke public database access.
 Older clients cannot bypass the server deadline, but their inactive controls may lag.
 Offline checks include `tests/spectators.test.js`, `tests/live-presence.test.js`,
 `scripts/spectator-browser-test.mjs`, and the isolated emulator's public-read/owner-write
@@ -155,7 +153,7 @@ Game moves and dice still run in the browser, and signed-in owners can submit th
 
 ## Verification
 
-The 2 November commentary and move-validation refinements are published on Vercel with matching Firestore rules and indexes. New commentary removes sports framing and adds event-specific guidance and wording checks while preserving saved reports. The rules restrict noncombat army changes to the active player's countries, reject troop reductions during funding and multi-country transfers, and require the round to match turn-order wrapping. These changes retain the existing record formats and Spark plan. The release also includes the tutorial scroll fix, local country flag images, one-field multiplayer country search and homepage briefing reveal. See the [latest release checks](VERCEL.md#latest-release-2-november-2026).
+The 2 November release added commentary and move-validation refinements with matching Firestore rules and indexes. New commentary removes sports framing and adds event-specific guidance and wording checks while preserving saved reports. The rules restrict noncombat army changes to the active player's countries, reject troop reductions during funding and multi-country transfers, and require the round to match turn-order wrapping. These changes retain the existing record formats and Spark plan. The release also includes the tutorial scroll fix, local country flag images, one-field multiplayer country search and homepage briefing reveal. See the [archived release checks](VERCEL.md#release-archive-2-november-2026).
 
 The quality release was published to Vercel and Firebase Hosting with matching Firestore rules on 1 November 2026 and checked live through 2 November. Both hosts served the checked frontend files; the published rules matched the source that passed 14 emulator tests. Live checks covered existing campaigns, versioned saves, new-campaign save/reload without the recovery cache, Gemini generation and reuse, spectator revocation and two-player gameplay. All fixtures used temporary accounts and were removed; existing users and campaigns were not migrated or deleted. See [release evidence](VERCEL.md#verify-the-deployed-website).
 

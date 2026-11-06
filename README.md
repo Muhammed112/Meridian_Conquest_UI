@@ -1,7 +1,7 @@
 # Meridian Conquest
 
-Meridian Conquest is a turn-based strategy web application developed for the
-University of Cape Town's **INF4001N Entrance Exam for 2027**. Inspired by Risk,
+Meridian Conquest is a turn-based strategy web application developed for my
+**INF4001N Entrance Exam for 2027**. Inspired by Risk,
 it places ten real countries on a world map. Choose your starting country,
 build your army and defeat nine opposing commanders to control all ten countries.
 
@@ -102,7 +102,8 @@ save revisions and compatibility with existing campaigns.
 
 ### Requirements
 
-- Node.js **24**, as specified in `.nvmrc`, with npm.
+- Node.js **24**, as specified in `.nvmrc`, with npm for the recommended server,
+  development tools and tests. Python **3** is an optional static-server alternative.
 - A modern browser with JavaScript and browser storage enabled. Desktop Chrome
   is a supported development/test environment.
 - Internet access for accounts, cloud saves, multiplayer, live viewing and AI.
@@ -111,8 +112,10 @@ save revisions and compatibility with existing campaigns.
 
 ### Run locally
 
-Use the supplied source ZIP; no GitHub access is required. The repository is
-private, so cloning its link requires an account with repository access.
+The recommended Node.js setup works on Windows and macOS.
+
+Use the supplied source ZIP or clone the public GitHub repository. Neither method
+requires a GitHub account or an access grant.
 
 1. Install Node.js 24 with npm. Confirm `node --version` shows `v24` and
    `npm --version` prints a version number.
@@ -127,9 +130,7 @@ npm run dev
 
 4. Keep the terminal open. When it prints `Meridian Conquest: http://localhost:8081`,
    open **http://localhost:8081** in Chrome or another modern browser.
-5. Create a player account or sign in using the application test credentials
-   supplied separately with the submission. These are player credentials, not
-   Firebase administrator or GitHub credentials.
+5. Create a player account or sign in with an existing player email and password.
 
 Run the application through this server, rather than double-clicking
 `dist/index.html`. Press **Ctrl+C** in the terminal when finished. Internet access
@@ -146,21 +147,48 @@ $env:MERIDIAN_PORT = '8082'
 npm run dev
 ```
 
-If you already have repository access, cloning is an alternative to extracting
-the ZIP; then follow the same installation and start commands above:
+### macOS: run the ZIP with Python 3
+
+1. Install Python 3 if `python3 --version` is unavailable.
+2. Extract the ZIP completely and open the `Meridian_Conquest_UI` folder in
+   VS Code. Select **Terminal → New Terminal**. The terminal must be in the
+   extracted project folder containing `dist`.
+3. Run:
+
+```sh
+python3 -m http.server 8080 --directory dist
+```
+
+4. Keep the terminal open and visit **http://localhost:8080**. Create a player
+   account or sign in. Press **Ctrl+C** to stop the server.
+
+This serves the bundled application without installing npm dependencies. It does
+not supply local App Check attestation or run background population source checks.
+For AI commentary and replay summaries, use the deployed site or the recommended
+Node.js server with the operator setup in [Local AI setup](#local-ai-setup).
+
+### Run a GitHub checkout
+
+Install Node.js 24 with npm and Git. The public repository can be cloned without
+a GitHub account or an access grant. On Windows or macOS, run:
 
 ```sh
 git clone https://github.com/Muhammed112/Meridian_Conquest_UI.git
 cd Meridian_Conquest_UI
+npm ci
+npm run dev
 ```
+
+Keep the terminal open and visit **http://localhost:8081**. Create a player account
+or sign in. The same [local AI requirements](#local-ai-setup) apply.
 
 ### Local AI setup
 
-For commentary without operator setup, open
+For commentary and replay summaries without operator setup, open
 **[the deployed application](https://meridian-conquest.vercel.app)** and sign in
 with an ordinary player account. No local installation is needed for that route.
 
-Local commentary needs an App Check development attestation. An operator with
+Local AI needs an App Check development attestation. An operator with
 access to the configured Firebase project can run:
 
 ```sh
@@ -171,7 +199,7 @@ npm run dev
 The development server registers or reuses a private token under the ignored
 `.firebase` directory and serves it only on loopback. Static hosting serves an
 empty local-configuration stub. Reviewers without operator access can use the
-deployed site for commentary; an ordinary player does not need project
+deployed site for AI features; an ordinary player does not need project
 administration access.
 
 A missing local attestation can show an AI setup warning; it does not prevent the
@@ -370,6 +398,11 @@ in single-player and 30 in multiplayer, with a recorded regrouping explanation.
 
 ## Testing and code quality
 
+I shared the deployed game link with other people for user testing and asked
+them to identify bugs and suggest UI improvements. Their feedback helped me
+refine gameplay pacing, tutorial guidance, country-label visibility and the
+report layout.
+
 Install dependencies with `npm ci` before running checks.
 
 | Command                      | Purpose                                                                                         |
@@ -433,23 +466,12 @@ expected result and visible error. Do not include passwords or tokens.
 Further help: [Firebase guide](docs/FIREBASE.md) and
 [tutorial coverage](docs/TUTORIAL.md).
 
-## Roadmap
-
-Possible future work includes a trusted backend for competitive anti-cheat,
-broader human-reviewed AI evaluations and further readability improvements on
-short desktop windows. These are future options, not implemented features.
-
 ## Contributing
 
 This repository is maintained as a university assignment. Discuss substantial
 changes through an issue before opening a pull request. Follow
 [CONTRIBUTING.md](CONTRIBUTING.md): separate rules from presentation, reuse shared
 logic, explain non-obvious code, preserve saves and run appropriate checks.
-
-Exclude `.firebase/`, `.vercel/`, `.git/`, credentials, debug tokens, logs and
-`node_modules/` from the submission ZIP. Supply application test credentials
-and examiner database access through the required submission channel, not in
-source.
 
 ## Author and acknowledgements
 
@@ -477,5 +499,3 @@ application source. Third-party materials retain their own licences and credits:
 - [world-atlas licence](dist/assets/world-atlas-LICENSE.txt).
 - [flag-icons licence](dist/assets/flags/LICENSE).
 - Music attribution in the application's **Settings → Sound** credits.
-
-Keep these notices with the relevant assets when preparing the submission.

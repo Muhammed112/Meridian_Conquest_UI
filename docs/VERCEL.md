@@ -23,10 +23,10 @@ npx vercel deploy --prod
 
 On another development computer, sign in with `npx vercel login`, then link to
 the existing project with `npx vercel link --project meridian-conquest --scope mo-dawood`.
-To use automatic Git deployments later, push the reviewed local changes before
-connecting `Muhammed112/Meridian_Conquest_UI` to this project in Vercel settings.
+Automatic Git deployments require `Muhammed112/Meridian_Conquest_UI` to be
+connected to this project in Vercel settings.
 
-Keep the Root Directory at the repository root so Vercel reads `vercel.json`.
+The Root Directory is the repository root so Vercel reads `vercel.json`.
 The checked-in configuration selects these settings automatically:
 
 | Setting          | Value          |
@@ -71,17 +71,16 @@ It does not change users, campaign documents, passwords, sign-in providers,
 billing or App Check enforcement. If a request fails after one update, run the
 preview again; applying the remaining addition is safe to repeat.
 
-Keep the existing `firebaseConfig.authDomain` in `dist/firebase-config.js`.
+`firebaseConfig.authDomain` in `dist/firebase-config.js` remains the Firebase domain.
 Vercel serves the game while Firebase retains its authentication action pages.
-Never copy the private local App Check debug token into Vercel or public files.
+Local App Check debug tokens are private and excluded from Vercel and public files.
 The checked-in `dist/ai-local-config.js` already disables local-only overrides
 when served statically.
 
-## Publish future spectator permission changes separately
+## Deploy spectator permissions separately
 
-The current rules and indexes were published on 2 November 2026. For later
-changes, review and test the local rules and index configuration, then publish
-them to Firebase using this deliberately scoped command:
+Rules and index changes use a separate Firebase deployment after local
+verification:
 
 ```sh
 npx firebase deploy --only firestore:rules,firestore:indexes --project meridian-conquest-m112
@@ -93,9 +92,9 @@ live spectator links. The original private campaign collections stay owner-only.
 Frontend deployments do not update these permissions automatically.
 See [Firebase setup](FIREBASE.md) for details.
 
-## Latest release: 2 November 2026
+## Release archive: 2 November 2026
 
-The current application was deployed to the existing Vercel production project as
+The 2 November application was deployed to the existing Vercel production project as
 `dpl_A8fruxnWELKJ6bTF8NEvmS8Y7inV`, with the canonical address
 [meridian-conquest.vercel.app](https://meridian-conquest.vercel.app).
 Its deployment address is
@@ -131,16 +130,16 @@ the test App Check attestation were removed.
 The automated Gemini check used a temporary debug provider, as the previous
 release did. It did not disable production App Check enforcement or certify an
 ordinary browser's reCAPTCHA trust score. Existing user accounts and campaigns
-were not migrated or deleted. Refresh existing Vercel tabs to load the release.
+were not migrated or deleted. Existing Vercel tabs load new application code after a refresh.
 
 ## Verify the deployed website
 
 The quality update was published to Vercel and Firebase Hosting with matching
 Firestore rules on 1 November 2026, with live checks continuing on 2 November.
 Its campaign writer adds `saveRevision`, `historyHead` and event predecessor
-fields. Future changes to this save protocol must update the rules and all
-maintained frontends together; publishing only the frontend against older rules
-rejects these save fields. Refresh existing tabs after a release. No existing
+fields. This save protocol requires matching rules and maintained frontends;
+publishing only the frontend against older rules
+rejects these save fields. Existing tabs load the new writer after a refresh. No existing
 campaigns were bulk-migrated or deleted. See [compatibility strategy](DATABASE.md#compatibility-strategy).
 
 The release passed formatting, lint, 199 unit tests, all eight offline browser
@@ -156,8 +155,8 @@ anonymous spectator access and revocation. A separate fresh-account check
 confirmed a new campaign reached Firestore and reloaded after removing its
 browser recovery cache. Temporary test data was removed. The
 automated browser required Firebase's temporary debug provider because reCAPTCHA
-gave it a low trust score. The owner separately confirmed commentary appeared in
-a normal browser. Production App Check protection remains enabled.
+gave it a low trust score. Commentary was also confirmed in a normal browser.
+Production App Check protection remains enabled.
 
 A separate live two-browser multiplayer check passed country reservations,
 opening rolls, turn permissions, shared combat results, mobile layout and
