@@ -19,7 +19,6 @@ The application is deployed on Vercel and uses Firebase Authentication, Cloud
 Firestore and Firebase AI Logic. Firebase remains on the free Spark plan; the
 deployment does not use Cloud Functions or a personal Gemini API key.
 
-The latest application release was published on **5 November 2026**.
 It includes on-demand replay summaries with concrete key events, a quiet loading
 state and links to each highlighted moment. Active campaign cards focus on
 resuming play; completed cards offer named replay and gameplay-sharing controls.
@@ -29,11 +28,12 @@ The release also fixes tutorial typing timing and
 prevents delayed sharing restoration or earlier failed requests from undoing
 Stop sharing. Application and Firestore checks run in GitHub Actions.
 
-Release checks passed formatting, lint, **306 unit tests** and **18 Firestore
-permission tests**. Post-deployment checks matched 306 non-audio public files to
-the local source, confirmed eight private paths were unavailable, and checked the
-homepage and opening-order preview in a browser. The opening-order deployment
-check used a cloud-disabled fixture without creating a real campaign.
+The latest local checks passed formatting, lint and **330 unit tests**. An earlier
+release passed **18 Firestore permission tests**; those tests were not rerun for
+this update. Post-deployment checks matched **307 non-audio public files** to the
+local source and confirmed eight private paths were unavailable. Browser checks
+covered the homepage, opening-order preview and replay using isolated fixtures,
+without creating cloud campaigns or making model requests.
 
 ## Preview
 
@@ -212,6 +212,13 @@ static server can serve `dist`, but use `npm run dev` for local AI setup and
 background population updates.
 
 ## Usage
+
+### Login details
+
+Use this account to sign in to Meridian Conquest:
+
+- email: `mdawood7567@gmail.com`
+- Password: `Dawood11`
 
 ### Start a single-player campaign
 
